@@ -13,20 +13,17 @@
 用法：python "Problem I/plot_curves.py"
 """
 import os
+import subprocess
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import openpyxl
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # ---------------- 全局绘图规范 ----------------
-FONT = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+FONT = "Microsoft YaHei, SimHei, sans-serif"
 INK = "#333333"
 GRID = "#E0E0E0"
-
-plt.rcParams["font.sans-serif"] = FONT
-plt.rcParams["axes.unicode_minus"] = False
 
 # 要画的 4 个半径位置（cm）与各自的颜色（Office 主题色系，由内到外递进）
 RADII_CM = [0.5, 1.0, 1.5, 2.0]
@@ -42,6 +39,32 @@ PROJECT = os.path.dirname(BASE)                            # .../CUMCM
 GRAPHICS = os.path.join(PROJECT, "graphics")
 SRC = os.path.join(PROJECT, "result1.xlsx")
 OUT = os.path.join(GRAPHICS, "fig_q1_curves.png")
+
+
+def apply_windows_kaleido_cleanup_workaround():
+    """兼容 Choreographer 在 Windows 上误报 taskkill 超时的问题。"""
+    if os.name != "nt":
+        return
+
+    try:
+        import choreographer.browser_async as browser_async
+    except ImportError:
+        return
+
+    original_kill = browser_async.kill
+    if getattr(original_kill, "_cumcm_timeout_workaround", False):
+        return
+
+    def kill_without_taskkill_timeout(process):
+        try:
+            original_kill(process)
+        except subprocess.TimeoutExpired:
+            # taskkill 偶尔在目标 Chrome 已退出后仍不返回。忽略其自身的
+            # 超时，随后仍由 Choreographer 检查浏览器是否真正关闭。
+            pass
+
+    kill_without_taskkill_timeout._cumcm_timeout_workaround = True
+    browser_async.kill = kill_without_taskkill_timeout
 
 
 def load_sheet(path, sheet_name, radii_cm):
@@ -79,59 +102,79 @@ def main():
     t, temp = load_sheet(SRC, "温度", RADII_CM)
     _, moist = load_sheet(SRC, "水分浓度", RADII_CM)
 
-    fig, axes = plt.subplots(1, 2, figsize=(12.4, 5.6))
-    ax_temp, ax_moist = axes
+    fig = make_subplots(
+        rows=1, cols=2,
+        horizontal_spacing=0.11,
+        subplot_titles=["(a) 药材温度", "(b) 药材水分浓度"],
+    )
 
     for r in RADII_CM:
-        ax_temp.plot(
-            t, temp[r], color=COLORS[r], linewidth=2,
-            label=f"r = {r:.1f} cm",
+        fig.add_trace(
+            go.Scatter(
+                x=t, y=temp[r], mode="lines",
+                line=dict(color=COLORS[r], width=2),
+                name=f"r = {r:.1f} cm",
+                legendgroup=f"r{r}", showlegend=True,
+                hovertemplate=(f"t = %{{x:.0f}} s<br>T = %{{y:.4f}} °C"
+                               f"<extra>r = {r:.1f} cm</extra>"),
+            ), row=1, col=1,
         )
-        ax_moist.plot(
-            t, moist[r], color=COLORS[r], linewidth=2,
-            label=f"r = {r:.1f} cm",
+        fig.add_trace(
+            go.Scatter(
+                x=t, y=moist[r], mode="lines",
+                line=dict(color=COLORS[r], width=2),
+                name=f"r = {r:.1f} cm",
+                legendgroup=f"r{r}", showlegend=False,
+                hovertemplate=(f"t = %{{x:.0f}} s<br>C = %{{y:.4f}} kg/kg"
+                               f"<extra>r = {r:.1f} cm</extra>"),
+            ), row=1, col=2,
         )
 
     # ---------------- 坐标轴 ----------------
-    for ax in axes:
-        ax.set_xlim(0, 1800)
-        ax.set_xticks(np.arange(0, 1801, 300))
-        ax.set_xlabel("时间 t / s")
-        ax.grid(True, color=GRID, linewidth=1)
-        ax.tick_params(direction="out", colors=INK)
-        for spine in ax.spines.values():
-            spine.set_color("#999999")
+    axis_common = dict(
+        tickmode="linear", tick0=0, dtick=300,
+        showgrid=True, gridcolor=GRID, gridwidth=1,
+        zeroline=False, linecolor="#999999", ticks="outside",
+    )
+    fig.update_xaxes(title_text="时间 t / s", range=[0, 1800], **axis_common, row=1, col=1)
+    fig.update_xaxes(title_text="时间 t / s", range=[0, 1800], **axis_common, row=1, col=2)
 
-    ax_temp.set_title("(a) 药材温度", fontsize=15, color=INK)
-    ax_temp.set_ylabel("温度 T / °C")
-    ax_temp.set_ylim(27.5, 37.5)
-    ax_temp.set_yticks(np.arange(28, 38, 1))
-
-    ax_moist.set_title("(b) 药材水分浓度", fontsize=15, color=INK)
-    ax_moist.set_ylabel("水分浓度 C / (kg/kg)")
-    ax_moist.set_ylim(1.40, 2.62)
-    ax_moist.set_yticks(np.arange(1.4, 2.61, 0.2))
+    fig.update_yaxes(
+        title_text="温度 T / °C", range=[27.5, 37.5],
+        tickmode="linear", tick0=28, dtick=1,
+        showgrid=True, gridcolor=GRID, gridwidth=1,
+        zeroline=False, linecolor="#999999", row=1, col=1,
+    )
+    fig.update_yaxes(
+        title_text="水分浓度 C / (kg/kg)", range=[1.40, 2.62],
+        tickmode="linear", tick0=1.4, dtick=0.2,
+        showgrid=True, gridcolor=GRID, gridwidth=1,
+        zeroline=False, linecolor="#999999", row=1, col=2,
+    )
 
     # ---------------- 版面 ----------------
-    handles, labels = ax_temp.get_legend_handles_labels()
-    fig.legend(
-        handles, labels, ncol=4, loc="lower center",
-        bbox_to_anchor=(0.58, 0.015), frameon=False, fontsize=13,
+    fig.update_layout(
+        width=1240, height=560,
+        margin=dict(l=75, r=35, t=80, b=110),
+        font=dict(family=FONT, size=13, color=INK),
+        legend=dict(
+            orientation="h", x=0.5, y=-0.17,
+            xanchor="center", yanchor="top",
+            font=dict(size=13, family=FONT, color=INK),
+            bgcolor="rgba(0,0,0,0)",
+            title=dict(text="到药材中心的距离 r：", font=dict(size=13, family=FONT, color=INK),
+                       side="left"),
+        ),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
     )
-    fig.text(0.125, 0.032, "到药材中心的距离 r：", fontsize=13, color=INK)
-    fig.subplots_adjust(left=0.075, right=0.97, top=0.88, bottom=0.22, wspace=0.22)
+    for ann in fig.layout.annotations:
+        if ann.text and ann.text.startswith("("):
+            ann.font = dict(size=15, family=FONT, color=INK)
 
     os.makedirs(GRAPHICS, exist_ok=True)
-    # 直接由 Matplotlib 写入 PNG，避免 Kaleido 在 Windows 上清理
-    # Chrome 子进程时偶发的 “Couldn't close or kill browser subprocess”。
-    tmp_out = f"{OUT}.tmp"
-    try:
-        fig.savefig(tmp_out, format="png", dpi=200, facecolor="white")
-        os.replace(tmp_out, OUT)
-    finally:
-        plt.close(fig)
-        if os.path.exists(tmp_out):
-            os.remove(tmp_out)
+    apply_windows_kaleido_cleanup_workaround()
+    fig.write_image(OUT, scale=2)
 
     print("曲线图已生成：")
     print("  ", OUT)
