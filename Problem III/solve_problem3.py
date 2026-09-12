@@ -1,17 +1,17 @@
 """第三问：药材烘房二维轴对称长时干燥模型 —— 唯一入口脚本。
 
 本文件由原 q2_2d_model.py（物理库）、q3_2d_model.py（主模型）、solve_result3.py（入口）
-与 6 个 q3_*.py 检验脚本合并而成：物理公式、离散格式与求解器逐字保留。
+与 6 个 q3_*.py 检验脚本合并而成。
+物性默认由 drying_common.MATERIAL_MODE 选择；staged 为6780s附录2切换附录3，
+specified 为题面指定的全程附录3。坐标 z 从中截面0到端面0.125m。
 
 用法（在 Problem III/ 目录下执行）：
 
     python solve_problem3.py                     # 求解并写出 ../result3.xlsx（默认自适应 BDF）
-    python solve_problem3.py --solver rk4        # 可选：固定步长二阶段隐式 RK4
-    python solve_problem3.py --no-xlsx           # 只求解、不写交付件
-    python solve_problem3.py --xlsx D:/result3.xlsx
+    python solve_problem3.py --solver rk4        # 可选：固定步长二阶段隐式 RK4（同样只写 result3.xlsx）
     python solve_problem3.py --mode compare      # BDF 与 RK4 求解器对比
     python solve_problem3.py --mode grid         # 网格收敛性检验
-    python solve_problem3.py --mode temporal     # 时间步长收敛性检验（RK4 路径）
+    python solve_problem3.py --mode temporal     # 时间积分精度检验（生产BDF）
     python solve_problem3.py --mode conservation # 全局水分守恒检验
     python solve_problem3.py --mode steady       # 均匀稳态检验
     python solve_problem3.py --mode rebound      # 表面含水率回升检验
@@ -25,12 +25,13 @@
 收敛阶、水分守恒误差、均匀稳态漂移、表面回升量、RK4 与 BDF 对照）一律打印到终端，
 不写 npz、报告 md 或检验表格。
 
-时间推进：BDF（rtol=2e-7，与问题四同一套）为生产解；RK4 为可复选路径。两条路径
-在交付口径上的烘干时间逐位一致，终端输出会打印实际步数与右端求值次数。
+时间推进：BDF（容差见 drying_common.py，与问题四同一套）为生产解；RK4 为可复选路径。两条路径
+终端输出会打印实际步数与右端求值次数；两种求解器的一致性由 compare 检验。
 """
 from __future__ import annotations
 
 import argparse
+import sys
 import math
 import time
 from contextlib import contextmanager
@@ -42,6 +43,11 @@ from openpyxl import load_workbook
 from scipy.integrate import solve_ivp
 from scipy.signal import savgol_filter
 from scipy.sparse import bmat, coo_matrix
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from drying_common import (face_mean, component_atol, mass_balance, RTOL,
+    ATOL_T, ATOL_C, NONLINEAR_RTOL, NONLINEAR_MAXITER, MATERIAL_MODE,
+    ENV_FINE_INTERVAL_S, ENV_FINE_UNTIL_S, ensure_deliverable_writable, save_deliverable)
 
 
 # ============================================================================
@@ -58,6 +64,7 @@ RADIUS = 0.02
 
 
 LENGTH = 0.25
+HALF_LENGTH = LENGTH / 2
 
 
 TEMPERATURE_0 = 28.0
@@ -178,7 +185,7 @@ def detect_critical_time() -> float:
     raise RuntimeError("Could not determine the phase-switch time")
 
 
-CRITICAL_TIME = detect_critical_time()
+CRITICAL_TIME = 6780.0  # 与第二问统一：此前附录2，此时起附录3。
 
 
 def build_phase_weight() -> np.ndarray:
@@ -231,6 +238,10 @@ def raw_air_temperature(time: float) -> float:
 
 
 def phase_weight(time: float) -> float:
+    if MATERIAL_MODE == "specified":
+        return 1.0
+    if not PHASE_BLEND:
+        return float(time >= CRITICAL_TIME)
     return float(np.interp(time, BOUNDARY_TIME, PHASE_WEIGHT))
 
 
@@ -246,8 +257,6 @@ def moisture_diffusivity(
     appendix3 = 2.4e-3 * np.exp(
         -0.45 / concentration - 3850.0 / temperature_k
     )
-    if not PHASE_BLEND:
-        return appendix3
     appendix2 = 7.0e-9 * np.exp(-0.89 / concentration)
     weight = phase_weight(time)
     return (1.0 - weight) * appendix2 + weight * appendix3
@@ -261,8 +270,6 @@ def material_properties(
     density = 650.0 + 128.0 * concentration
     heat_capacity = 1450.0 + 2736.0 * ratio
     conductivity = 0.21 + 0.38 * ratio
-    if not PHASE_BLEND:
-        return density, heat_capacity, conductivity
     weight = phase_weight(time)
     return (
         (1.0 - weight) * 820.0 + weight * density,
@@ -285,9 +292,9 @@ def make_geometry(
 ]:
     """Build axisymmetric control-volume areas and volumes."""
     radii = np.linspace(0.0, RADIUS, n_radial + 1)
-    axial_positions = np.linspace(0.0, LENGTH, n_axial + 1)
+    axial_positions = np.linspace(0.0, HALF_LENGTH, n_axial + 1)
     dr = RADIUS / n_radial
-    dz = LENGTH / n_axial
+    dz = HALF_LENGTH / n_axial
 
     radial_left = np.empty(n_radial + 1)
     radial_right = np.empty(n_radial + 1)
@@ -308,7 +315,7 @@ def make_geometry(
     axial_left[-1] = 0.5 * (
         axial_positions[-2] + axial_positions[-1]
     )
-    axial_right[-1] = LENGTH
+    axial_right[-1] = HALF_LENGTH
     if n_axial > 1:
         axial_left[1:-1] = 0.5 * (
             axial_positions[:-2] + axial_positions[1:-1]
@@ -376,11 +383,12 @@ def conservative_operator(
     ambient_value: float,
     geometry: tuple,
     out: np.ndarray | None = None,
+    faces: tuple | None = None,
 ) -> np.ndarray:
     """Conservative axisymmetric divergence of a diffusive flux.
 
     out 非空时写入调用方缓冲；内部临时数组按网格缓存，避免每步重复分配。
-    浮点运算的分组顺序与原实现逐条一致，结果逐位相同。
+    面系数由共用积分规则提供；中心对称面不计入物理边界通量。
     """
     (
         dr,
@@ -397,25 +405,15 @@ def conservative_operator(
     result = space["result"] if out is None else out
     result.fill(0.0)
 
-    # 径向内部面：(A * 0.5(D_i+D_{i+1}) * (u_{i+1}-u_i)) / dr
-    np.add(transport_property[:-1], transport_property[1:], out=space["d_face_r"])
-    space["d_face_r"] *= 0.5
-    np.multiply(radial_face_area, space["d_face_r"], out=space["flux_r"])
-    np.subtract(values[1:], values[:-1], out=space["d_face_r"])
-    space["flux_r"] *= space["d_face_r"]
-    space["flux_r"] /= dr
-    result[:-1] += space["flux_r"]
-    result[1:] -= space["flux_r"]
-
-    # 轴向内部面
-    np.add(transport_property[:, :-1], transport_property[:, 1:], out=space["d_face_z"])
-    space["d_face_z"] *= 0.5
-    np.multiply(axial_face_area, space["d_face_z"], out=space["flux_z"])
-    np.subtract(values[:, 1:], values[:, :-1], out=space["d_face_z"])
-    space["flux_z"] *= space["d_face_z"]
-    space["flux_z"] /= dz
-    result[:, :-1] += space["flux_z"]
-    result[:, 1:] -= space["flux_z"]
+    # 所有传输系数均沿节点状态做积分平均，由调用方提供。
+    if faces is None:
+        raise ValueError("必须显式提供积分平均面系数")
+    flux_r = radial_face_area * faces[0] * np.diff(values, axis=0) / dr
+    flux_z = axial_face_area * faces[1] * np.diff(values, axis=1) / dz
+    result[:-1] += flux_r
+    result[1:] -= flux_r
+    result[:, :-1] += flux_z
+    result[:, 1:] -= flux_z
 
     result /= volumes
 
@@ -426,18 +424,33 @@ def conservative_operator(
     space["bnd_z"] /= volumes[-1]
     result[-1] -= space["bnd_z"]
 
-    # 两个端面 z = 0、z = L
+    # z=0 为中心对称面，无通量；z=L/2 为物理端面。
     np.multiply(axial_boundary_area, boundary_coefficient, out=space["surf_r"])
-    np.subtract(values[:, 0], ambient_value, out=space["bnd_r"])
-    space["bnd_r"] *= space["surf_r"]
-    space["bnd_r"] /= volumes[:, 0]
-    result[:, 0] -= space["bnd_r"]
-
     np.subtract(values[:, -1], ambient_value, out=space["bnd_r2"])
     space["bnd_r2"] *= space["surf_r"]
     space["bnd_r2"] /= volumes[:, -1]
     result[:, -1] -= space["bnd_r2"]
     return result
+
+
+def transport_faces(concentration, temperature, time, kind):
+    function = (lambda c, t: moisture_diffusivity(c, t, time)) if kind == "mass" else (
+        lambda c, t: material_properties(c, time)[2])
+    return tuple(face_mean(function, (concentration[a], temperature[a]),
+                           (concentration[b], temperature[b]))
+                 for a, b in ((np.s_[:-1, :], np.s_[1:, :]),
+                              (np.s_[:, :-1], np.s_[:, 1:])))
+
+
+def boundary_inflow(time, state, n_radial, n_axial):
+    """净入流/干质量；固定域中等于几何边界通量除以半域体积。"""
+    n = (n_radial+1)*(n_axial+1)
+    c = state[n:].reshape(n_radial+1, n_axial+1)
+    geometry = make_geometry(n_radial, n_axial)
+    ca = air_moisture(time)
+    net = MASS_TRANSFER_COEFFICIENT * (np.sum(geometry[5]*(ca-c[-1]))
+                                      + np.sum(geometry[6]*(ca-c[:, -1])))
+    return float(net / geometry[2].sum())
 
 
 def right_hand_side(
@@ -470,6 +483,7 @@ def right_hand_side(
         air_temperature_value,
         geometry,
         out=space["flux_heat"],
+        faces=transport_faces(concentration, temperature, time, "heat"),
     )
     d_temperature = thermal_flux / (density * heat_capacity)
 
@@ -480,6 +494,7 @@ def right_hand_side(
         air_moisture_value,
         geometry,
         out=space["flux_mass"],
+        faces=transport_faces(concentration, temperature, time, "mass"),
     )
 
     return np.concatenate(
@@ -515,10 +530,10 @@ RECORD_INTERVAL = 60.0
 MAX_DURATION = 10 * 24 * 3600
 
 
-N_RADIAL = 24
+N_RADIAL = 320  # 交付表 1mm 列对应 xi=k/20；320=20×16，交付列正好落在节点上
 
 
-N_AXIAL = 50
+N_AXIAL = 40
 
 
 TABLE_INTERVAL = 6 * 3600
@@ -530,7 +545,7 @@ TABLE_RADII_CM = np.array([0.0, 0.5, 1.0, 1.5, 2.0])
 SOLVER = "bdf"
 
 
-BDF_RTOL = 2.0e-7
+BDF_RTOL = RTOL
 
 
 BDF_MAX_STEP = 300.0
@@ -539,7 +554,7 @@ BDF_MAX_STEP = 300.0
 IMPLICIT_TOLERANCE = 1.0e-7
 
 
-IMPLICIT_MAX_ITERATIONS = 20
+IMPLICIT_MAX_ITERATIONS = NONLINEAR_MAXITER
 
 
 IMPLICIT_RELAXATION = 0.8
@@ -587,8 +602,8 @@ def profiles_from_state(
     concentration = state[node_count:].reshape(
         n_radial + 1, n_axial + 1
     )
-    # 口径与问题一、二、四一致：取中截面 z = L/2 的径向剖面（半长 50 段时恰为 0.125 m 节点）。
-    mid_index = (n_axial + 1) // 2
+    # 半长度坐标以中截面为原点，任意奇偶网格均精确包含 z=0。
+    mid_index = 0
     midplane_temperature = temperature[:, mid_index]
     midplane_concentration = concentration[:, mid_index]
     return (
@@ -615,6 +630,15 @@ def implicit_rk4_step(
     N_RADIAL = _globals["N_RADIAL"] if n_radial is None else n_radial
     N_AXIAL = _globals["N_AXIAL"] if n_axial is None else n_axial
     DT = _globals["DT"] if dt is None else dt
+    if not PHASE_BLEND and time < CRITICAL_TIME < time + DT:
+        middle, iterations1 = implicit_rk4_step(
+            state, time, dr, dz, N_RADIAL, N_AXIAL, CRITICAL_TIME - time
+        )
+        final, iterations2 = implicit_rk4_step(
+            middle, CRITICAL_TIME, dr, dz, N_RADIAL, N_AXIAL,
+            time + DT - CRITICAL_TIME,
+        )
+        return final, max(iterations1, iterations2)
     stage_1 = state.copy()
     stage_2 = state.copy()
 
@@ -643,10 +667,10 @@ def implicit_rk4_step(
             RK4_A[1, 0] * derivative_1
             + RK4_A[1, 1] * derivative_2
         )
-        error = max(
-            float(np.max(np.abs(next_stage_1 - stage_1))),
-            float(np.max(np.abs(next_stage_2 - stage_2))),
-        )
+        scale = component_atol(len(state)//2) + NONLINEAR_RTOL*np.maximum(
+            np.abs(next_stage_1), np.abs(next_stage_2))
+        error = max(float(np.max(np.abs(next_stage_1-stage_1)/scale)),
+                    float(np.max(np.abs(next_stage_2-stage_2)/scale)))
         stage_1 = (
             (1.0 - IMPLICIT_RELAXATION) * stage_1
             + IMPLICIT_RELAXATION * next_stage_1
@@ -655,7 +679,7 @@ def implicit_rk4_step(
             (1.0 - IMPLICIT_RELAXATION) * stage_2
             + IMPLICIT_RELAXATION * next_stage_2
         )
-        if error < IMPLICIT_TOLERANCE:
+        if error <= 1.0:
             break
     else:
         raise RuntimeError(
@@ -699,107 +723,83 @@ def sparsity_pattern(n_radial: int, n_axial: int):
 
 
 def simulate_bdf(
-    n_radial: int | None = None,
-    n_axial: int | None = None,
-    rtol: float = BDF_RTOL,
-    max_step: float = BDF_MAX_STEP,
-    threshold: float | None = None,
-    max_duration: float | None = None,
-    record_interval: float | None = None,
-) -> dict[str, object]:
-    """用 scipy 的自适应 BDF 求解同一模型（与 solve_problem4.py 同一套做法）。
-
-    返回结构与 simulate() 兼容，便于复用 write_result_workbook。
-    达标判据同样取“严格低于阈值”的下一个整秒。
-    """
-    n_radial = N_RADIAL if n_radial is None else n_radial
-    n_axial = N_AXIAL if n_axial is None else n_axial
+    n_radial=None, n_axial=None, rtol=BDF_RTOL, max_step=BDF_MAX_STEP,
+    threshold=None, max_duration=None, record_interval=None,
+    stop_at_threshold=True, check_mass=True,
+):
+    """第二、三问共用半长度BDF核心；固定时长与达标停止只改变终止方式。"""
+    nr = N_RADIAL if n_radial is None else n_radial
+    nz = N_AXIAL if n_axial is None else n_axial
     threshold = THRESHOLD if threshold is None else threshold
-    max_duration = MAX_DURATION if max_duration is None else max_duration
-    record_interval = RECORD_INTERVAL if record_interval is None else record_interval
-
-    radii = np.linspace(0.0, RADIUS, n_radial + 1)
-    axial_positions = np.linspace(0.0, LENGTH, n_axial + 1)
-    output_radii = OUTPUT_RADII
-    dr = RADIUS / n_radial
-    dz = LENGTH / n_axial
-    node_count = (n_radial + 1) * (n_axial + 1)
-    mid_index = (n_axial + 1) // 2
-
-    def residual(time, vector):
-        return right_hand_side(vector, time, n_radial, n_axial, dr, dz)
-
-    def crossed(time, vector):
-        return float(vector[node_count:].max() - threshold)
-
-    crossed.terminal = True
-    crossed.direction = -1
-    options = {
-        "method": "BDF",
-        "rtol": rtol,
-        "atol": rtol * 0.01,
-        "jac_sparsity": sparsity_pattern(n_radial, n_axial),
-        "max_step": max_step,
-    }
-
-    start = make_state(n_radial, n_axial)
-    first = solve_ivp(
-        residual, (0.0, max_duration), start, events=crossed,
-        dense_output=True, **options,
-    )
-    if first.t_events[0].size == 0:
-        raise RuntimeError(
-            "BDF 求解在 max_duration 内未达标，无法确定烘干结束时刻"
-        )
-
-    crossing_time = float(first.t_events[0][0])
-    strict_stop_time = float(math.floor(crossing_time) + 1.0)
-
-    tail = None
-    if strict_stop_time > float(first.t[-1]) + 1.0e-9:
-        tail = solve_ivp(
-            residual, (float(first.t[-1]), strict_stop_time),
-            first.y[:, -1], dense_output=True, **options,
-        )
-
-    def state_at(time):
-        if tail is not None and time > float(first.t[-1]) + 1.0e-9:
-            return tail.sol(time)
-        return first.sol(time)
-
-    times = np.r_[
-        np.arange(0.0, strict_stop_time, record_interval), strict_stop_time
-    ]
-    temperature_profile = np.empty((times.size, output_radii.size))
-    concentration_profile = np.empty((times.size, output_radii.size))
-    for index, time in enumerate(times):
-        vector = state_at(float(time))
-        temperature = vector[:node_count].reshape(n_radial + 1, n_axial + 1)
-        concentration = vector[node_count:].reshape(n_radial + 1, n_axial + 1)
-        temperature_profile[index] = np.interp(
-            output_radii, radii, temperature[:, mid_index]
-        )
-        concentration_profile[index] = np.interp(
-            output_radii, radii, concentration[:, mid_index]
-        )
-
-    return {
-        "time_s": times,
-        "radius_cm": output_radii * 100.0,
-        "temperature_c": temperature_profile,
-        "moisture_kg_per_kg": concentration_profile,
-        "final_time_s": strict_stop_time,
-        "final_state": state_at(strict_stop_time),
-        "radii": radii,
-        "axial_positions": axial_positions,
-        "n_radial": n_radial,
-        "n_axial": n_axial,
-        "solver": "bdf",
-        "crossing_time_s": crossing_time,
-        "steps": int(first.t.size + (0 if tail is None else tail.t.size - 1)),
-        "nfev": int(first.nfev + (0 if tail is None else tail.nfev)),
-        "average_iterations": float("nan"),
-    }
+    end = MAX_DURATION if max_duration is None else max_duration
+    interval = RECORD_INTERVAL if record_interval is None else record_interval
+    if nr < 2 or nz < 2 or min(rtol, max_step, end, interval) <= 0:
+        raise ValueError("网格至少2，容差、步长和时长必须为正")
+    radii = np.linspace(0, RADIUS, nr+1)
+    axial_positions = np.linspace(0, HALF_LENGTH, nz+1)
+    dr, dz = RADIUS/nr, HALF_LENGTH/nz
+    n = (nr+1)*(nz+1)
+    def residual(t, y):
+        return right_hand_side(y, t, nr, nz, dr, dz)
+    def crossed(t, y):
+        return float(y[n:].max()-threshold)
+    crossed.terminal, crossed.direction = True, -1
+    options = dict(method="BDF", rtol=rtol,
+                   atol=component_atol(n)*(rtol/RTOL), jac_sparsity=sparsity_pattern(nr,nz),
+                   dense_output=True)
+    boundaries = sorted(set([0., float(end)] + [x for x in
+        ((CRITICAL_TIME, AIR_END_TIME) if not PHASE_BLEND else (AIR_END_TIME,)) if 0<x<end]))
+    segments=[]
+    state=make_state(nr,nz)
+    for left,right in zip(boundaries[:-1],boundaries[1:]):
+        def rhs(t,y):
+            tt=np.nextafter(t,-np.inf) if right==CRITICAL_TIME and t>=right else t
+            return residual(tt,y)
+        segment=solve_ivp(rhs,(left,right),state,
+            events=crossed if stop_at_threshold else None,
+            max_step=min(max_step,ENV_FINE_INTERVAL_S) if left<ENV_FINE_UNTIL_S else max_step, **options)
+        if not segment.success:
+            raise RuntimeError(segment.message)
+        segments.append(segment)
+        state=segment.y[:,-1]
+        if stop_at_threshold and segment.t_events[0].size:
+            break
+    crossing=None
+    stop=float(end)
+    if stop_at_threshold:
+        if not segments[-1].t_events[0].size:
+            raise RuntimeError("在允许时长内未达标，不能导出烘干完成结果")
+        crossing=float(segments[-1].t_events[0][0])
+        stop=float(math.floor(crossing)+1)
+        if stop>end:
+            raise RuntimeError("严格达标整秒超出允许时长")
+        tail=solve_ivp(residual,(crossing,stop),state,max_step=max_step,**options)
+        if not tail.success or tail.y[n:,-1].max()>=threshold:
+            raise RuntimeError("严格达标整秒验证失败")
+        segments.append(tail)
+    def state_at(t):
+        for seg in segments:
+            if t<=seg.t[-1]+1e-9:
+                return seg.sol(t)
+        raise ValueError("时间超出积分区间")
+    times=np.r_[np.arange(0.,stop,interval),stop]
+    tp,cp=[],[]
+    for t in times:
+        a,b=profiles_from_state(state_at(t),OUTPUT_RADII,radii,axial_positions,nr,nz)
+        tp.append(a);cp.append(b)
+    final=state_at(stop)
+    if not np.isfinite(final).all() or final[n:].min() < -ATOL_C:
+        raise RuntimeError("终态包含非法数值或负含水率")
+    balance=mass_balance(segments,n,make_geometry(nr,nz)[2],
+                        lambda t,y:boundary_inflow(t,y,nr,nz)) if check_mass else None
+    return dict(time_s=times,radius_cm=OUTPUT_RADII*100,
+                xi=OUTPUT_RADII/RADIUS,
+                temperature_c=np.asarray(tp),moisture_kg_per_kg=np.asarray(cp),
+                final_time_s=stop,final_state=final,radii=radii,axial_positions=axial_positions,
+                n_radial=nr,n_axial=nz,solver="bdf",crossing_time_s=crossing,
+                reached_threshold=bool(stop_at_threshold),conservation=balance,
+                steps=1+sum(s.t.size-1 for s in segments),nfev=sum(s.nfev for s in segments),
+                average_iterations=float("nan"))
 
 
 def solve(solver: str | None = None, **kwargs) -> dict[str, object]:
@@ -828,7 +828,7 @@ def simulate(
     """二阶段 Gauss-Legendre 隐式 RK4 推进（可选路径）。
 
     参数缺省时等于模块常量。函数体内以下同名的局部名遮蔽模块常量，因此函数体
-    无需改动即可参数化，默认调用与原实现逐位一致。
+    可按参数选择网格与步长，输出中截面剖面。
     """
     _globals = globals()
     N_RADIAL = _globals["N_RADIAL"] if n_radial is None else n_radial
@@ -839,10 +839,10 @@ def simulate(
     RECORD_INTERVAL = _globals["RECORD_INTERVAL"] if record_interval is None else record_interval
 
     radii = np.linspace(0.0, RADIUS, N_RADIAL + 1)
-    axial_positions = np.linspace(0.0, LENGTH, N_AXIAL + 1)
+    axial_positions = np.linspace(0.0, HALF_LENGTH, N_AXIAL + 1)
     output_radii = OUTPUT_RADII
     dr = RADIUS / N_RADIAL
-    dz = LENGTH / N_AXIAL
+    dz = HALF_LENGTH / N_AXIAL
 
     state = make_state(N_RADIAL, N_AXIAL)
     recorded_times = [0.0]
@@ -863,12 +863,15 @@ def simulate(
     previous_time = 0.0
     previous_state = state.copy()
     previous_max_concentration = float(state[-len(state) // 2 :].max())
-    steps_per_record = int(round(RECORD_INTERVAL / DT))
+    steps_per_record = max(1, int(round(RECORD_INTERVAL / DT)))
+    if not np.isclose(steps_per_record*DT, RECORD_INTERVAL):
+        raise ValueError("RK4 dt必须整除记录间隔；任意输出间隔请使用BDF")
     step = 0
     final_state = state
     final_time = 0.0
     iteration_total = 0
     completed_steps = 0
+    crossing_time = None
 
     while time < MAX_DURATION:
         previous_time = time
@@ -919,7 +922,7 @@ def simulate(
             while time < strict_stop_time:
                 previous_time = time
                 previous_state = state.copy()
-                state, iterations = implicit_rk4_step(state, time, dr, dz)
+                state, iterations = implicit_rk4_step(state, time, dr, dz, N_RADIAL, N_AXIAL, DT)
                 iteration_total += iterations
                 completed_steps += 1
                 time += DT
@@ -953,10 +956,12 @@ def simulate(
             break
 
         previous_max_concentration = current_max_concentration
+        final_state, final_time = state.copy(), time
 
     return {
         "time_s": np.asarray(recorded_times),
         "radius_cm": output_radii * 100.0,
+        "xi": output_radii / RADIUS,
         "temperature_c": np.asarray(recorded_temperature),
         "moisture_kg_per_kg": np.asarray(recorded_concentration),
         "final_time_s": final_time,
@@ -967,6 +972,7 @@ def simulate(
         "n_axial": N_AXIAL,
         "average_iterations": iteration_total / max(completed_steps, 1),
         "solver": "rk4",
+        "crossing_time_s": crossing_time,
         "steps": int(completed_steps),
         # 每次迭代 2 次右端求值，循环后另加 2 次（精确计数）
         "nfev": int(2 * iteration_total + 2 * completed_steps),
@@ -1009,9 +1015,7 @@ def write_result_workbook(
             cell.number_format = "0.0000"
 
     worksheet.freeze_panes = "B2"
-    workbook.save(output_path)
-    workbook.close()
-    return output_path
+    return save_deliverable(workbook, output_path)
 
 
 def run_solve(
@@ -1019,7 +1023,12 @@ def run_solve(
     write_xlsx: bool = True,
     xlsx_path: "Path | None" = None,
 ) -> None:
+    target = PROJECT / "result3.xlsx" if xlsx_path is None else Path(xlsx_path)
+    if write_xlsx:      # 交付件只写 result3.xlsx，占用时在长算前报错
+        ensure_deliverable_writable(target)
     result = solve(solver)
+    if result.get("conservation") is not None:
+        print("干质量归一化守恒:", result["conservation"])
     times = result["time_s"]
     concentrations = result["moisture_kg_per_kg"]
     temperatures = result["temperature_c"]
@@ -1147,13 +1156,13 @@ def check_compare() -> None:
 
 def check_grid() -> None:
     """网格收敛性检验（结果打印到终端）。"""
-    REFINEMENT_RATIO = 1.5
+    REFINEMENT_RATIO = 2.0
 
 
     GRID_LEVELS = [
-        ("粗网格", 10, 20),
-        ("中网格", 15, 30),
-        ("细网格", 20, 40),
+        ("粗网格", 12, 10),
+        ("中网格", 24, 20),
+        ("细网格", 48, 40),
     ]
 
 
@@ -1164,9 +1173,8 @@ def check_grid() -> None:
         # 改写既不可并行、也容易漏还原）。
         for name, n_radial, n_axial in GRID_LEVELS:
             start_time = time.perf_counter()
-            result = solve(n_radial=n_radial, n_axial=n_axial)
+            result = solve(solver="bdf", n_radial=n_radial, n_axial=n_axial)
             elapsed = time.perf_counter() - start_time
-            times = result["time_s"]
             concentrations = result["moisture_kg_per_kg"]
             records.append(
                 {
@@ -1177,7 +1185,7 @@ def check_grid() -> None:
                     "solver": str(result.get("solver", "?")),
                     "steps": int(result.get("steps", 0)),
                     "nfev": int(result.get("nfev", 0)),
-                    "dry_hours": float(times[-1] / 3600.0),
+                    "dry_hours": float(result["crossing_time_s"] / 3600.0),
                     "final_max": float(concentrations[-1].max()),
                     "elapsed": elapsed,
                 }
@@ -1199,7 +1207,7 @@ def check_grid() -> None:
                 np.log(abs(denominator / numerator))
                 / np.log(REFINEMENT_RATIO)
             )
-        if not np.isfinite(order) or np.isclose(order, 0.0):
+        if not np.isfinite(order) or order <= 0.0:
             richardson = float("nan")
         else:
             richardson = float(
@@ -1221,254 +1229,18 @@ def check_grid() -> None:
 
 
 def check_temporal() -> None:
-    """时间步长收敛性检验（RK4 路径；结果打印到终端）。"""
-    TEST_TIME = 6 * 3600.0
-
-
-    TIME_STEPS = np.array([2.5, 1.25, 0.625])
-
-
-    REFINEMENT_RATIO = 2.0
-
-
-    def run_to_time(dt: float) -> dict[str, object]:
-        radii = np.linspace(0.0, RADIUS, N_RADIAL + 1)
-        axial_positions = np.linspace(
-            0.0, LENGTH, N_AXIAL + 1
-        )
-        dr = RADIUS / N_RADIAL
-        dz = LENGTH / N_AXIAL
-        state = make_state(N_RADIAL, N_AXIAL)
-
-        start = time.perf_counter()
-        steps = int(round(TEST_TIME / dt))
-        current_time = 0.0
-        for _ in range(steps):
-            state, _ = implicit_rk4_step(
-                state, current_time, dr, dz, dt=dt
-            )
-            current_time += dt
-
-        node_count = (N_RADIAL + 1) * (N_AXIAL + 1)
-        concentration = state[node_count:].reshape(
-            N_RADIAL + 1, N_AXIAL + 1
-        )
-        return {
-            "dt": dt,
-            "concentration": concentration,
-            "elapsed": time.perf_counter() - start,
-            "radii": radii,
-            "axial_positions": axial_positions,
-        }
-
-
-    def weighted_l2_error(
-        values: np.ndarray,
-        reference: np.ndarray,
-        radii: np.ndarray,
-        axial_positions: np.ndarray,
-    ) -> float:
-        radial_area = np.trapezoid(
-            radii[:, None] * np.ones_like(values), axial_positions, axis=1
-        )
-        weights = np.repeat(radial_area[:, None], values.shape[1], axis=1)
-        numerator = np.sum(weights * (values - reference) ** 2)
-        denominator = np.sum(weights)
-        return float(np.sqrt(numerator / denominator))
-
-
-    def main() -> None:
-        results = [run_to_time(dt) for dt in TIME_STEPS]
-        radii = results[-1]["radii"]
-        axial_positions = results[-1]["axial_positions"]
-
-        pair_l2_errors = []
-        pair_max_errors = []
-        for index in range(len(results) - 1):
-            pair_l2_errors.append(
-                weighted_l2_error(
-                    results[index]["concentration"],
-                    results[index + 1]["concentration"],
-                    radii,
-                    axial_positions,
-                )
-            )
-            pair_max_errors.append(
-                float(
-                    np.max(
-                        np.abs(
-                            results[index]["concentration"]
-                            - results[index + 1]["concentration"]
-                        )
-                    )
-                )
-            )
-
-        observed_orders = []
-        for index in range(len(pair_l2_errors) - 1):
-            coarse_error = pair_l2_errors[index]
-            fine_error = pair_l2_errors[index + 1]
-            if fine_error <= 0.0:
-                order = float("nan")
-            else:
-                order = float(
-                    np.log(coarse_error / fine_error)
-                    / np.log(REFINEMENT_RATIO)
-                )
-            observed_orders.append(order)
-
-
-        for index, result in enumerate(results):
-            if index < len(pair_l2_errors):
-                l2_error = pair_l2_errors[index]
-                max_error = pair_max_errors[index]
-            else:
-                l2_error = 0.0
-                max_error = 0.0
-            print(
-                f"dt={result['dt']:.4f} "
-                f"L2={l2_error:.6e} "
-                f"max={max_error:.6e}"
-            )
-        print(f"observed orders: {observed_orders}")
-
-    main()
+    """生产BDF容差/最大步长加密检验，固定同一空间网格。"""
+    from validate_models import compare
+    coarse=simulate_bdf(rtol=BDF_RTOL,max_step=BDF_MAX_STEP)
+    fine=simulate_bdf(rtol=BDF_RTOL/10,max_step=BDF_MAX_STEP/2)
+    compare("BDF时间精度",coarse,fine)
 
 
 def check_conservation() -> None:
-    """全局水分守恒检验（结果打印到终端）。"""
-    def moisture_content(state: np.ndarray) -> float:
-        n_radial = N_RADIAL
-        n_axial = N_AXIAL
-        node_count = (n_radial + 1) * (n_axial + 1)
-        concentration = state[node_count:].reshape(
-            n_radial + 1, n_axial + 1
-        )
-        radii = np.linspace(0.0, RADIUS, n_radial + 1)
-        axial_positions = np.linspace(0.0, LENGTH, n_axial + 1)
-        radial_integral = np.trapezoid(
-            concentration * radii[:, None], axial_positions, axis=1
-        )
-        return float(
-            2.0
-            * np.pi
-            * np.trapezoid(radial_integral, radii)
-        )
-
-
-    def surface_flux(state: np.ndarray, time: float) -> float:
-        n_radial = N_RADIAL
-        n_axial = N_AXIAL
-        node_count = (n_radial + 1) * (n_axial + 1)
-        concentration = state[node_count:].reshape(
-            n_radial + 1, n_axial + 1
-        )
-        radii = np.linspace(0.0, RADIUS, n_radial + 1)
-        axial_positions = np.linspace(0.0, LENGTH, n_axial + 1)
-        ambient_moisture = air_moisture(time)
-        hm = MASS_TRANSFER_COEFFICIENT
-
-        lateral = (
-            2.0
-            * np.pi
-            * RADIUS
-            * hm
-            * np.trapezoid(
-                ambient_moisture - concentration[-1], axial_positions
-            )
-        )
-        lower_end = (
-            2.0
-            * np.pi
-            * hm
-            * np.trapezoid(
-                radii * (ambient_moisture - concentration[:, 0]), radii
-            )
-        )
-        upper_end = (
-            2.0
-            * np.pi
-            * hm
-            * np.trapezoid(
-                radii * (ambient_moisture - concentration[:, -1]), radii
-            )
-        )
-        return float(lateral + lower_end + upper_end)
-
-
-    def main() -> None:
-        radii = np.linspace(0.0, RADIUS, N_RADIAL + 1)
-        axial_positions = np.linspace(
-            0.0, LENGTH, N_AXIAL + 1
-        )
-        dr = RADIUS / N_RADIAL
-        dz = LENGTH / N_AXIAL
-
-        state = make_state(N_RADIAL, N_AXIAL)
-        initial_moisture = moisture_content(state)
-        cumulative_surface_flux = 0.0
-        time = 0.0
-        step = 0
-        final_state = state
-        final_time = 0.0
-
-        while time < MAX_DURATION:
-            previous_state = state.copy()
-            previous_flux = surface_flux(previous_state, time)
-            next_state, _ = implicit_rk4_step(
-                state, time, dr, dz
-            )
-            time += DT
-            next_flux = surface_flux(next_state, time)
-            cumulative_surface_flux += (
-                0.5 * (previous_flux + next_flux) * DT
-            )
-            state = next_state
-            step += 1
-
-            node_count = (N_RADIAL + 1) * (N_AXIAL + 1)
-            maximum_concentration = float(state[node_count:].max())
-            if maximum_concentration <= THRESHOLD:
-                previous_maximum = float(previous_state[node_count:].max())
-                denominator = previous_maximum - maximum_concentration
-                fraction = (
-                    0.0
-                    if abs(denominator) < 1.0e-15
-                    else (previous_maximum - THRESHOLD) / denominator
-                )
-                fraction = float(np.clip(fraction, 0.0, 1.0))
-                final_state = (
-                    (1.0 - fraction) * previous_state
-                    + fraction * state
-                )
-                final_time = time - DT + fraction * DT
-                crossing_flux = surface_flux(final_state, final_time)
-                cumulative_surface_flux += (
-                    fraction * DT *
-                    0.5 * (previous_flux + crossing_flux)
-                )
-                break
-            final_state = state
-            final_time = time
-
-        final_moisture = moisture_content(final_state)
-        moisture_change = final_moisture - initial_moisture
-        relative_error = abs(
-            moisture_change - cumulative_surface_flux
-        ) / max(abs(cumulative_surface_flux), 1.0e-16)
-        normalized_error = abs(
-            moisture_change - cumulative_surface_flux
-        ) / max(abs(initial_moisture - final_moisture), 1.0e-16)
-
-
-        print(f"initial moisture: {initial_moisture:.10e}")
-        print(f"final moisture: {final_moisture:.10e}")
-        print(f"moisture change: {moisture_change:.10e}")
-        print(f"surface flux: {cumulative_surface_flux:.10e}")
-        print(f"relative error: {relative_error:.6e}")
-        print(f"normalized error: {normalized_error:.6e}")
-
-    main()
+    """生产BDF全程干质量归一化水分守恒，独立积分边界通量。"""
+    result=simulate_bdf(check_mass=True)
+    for key,value in result["conservation"].items():
+        print(f"{key}: {value}")
 
 
 def check_steady() -> None:
@@ -1485,10 +1257,10 @@ def check_steady() -> None:
     def main() -> None:
         radii = np.linspace(0.0, RADIUS, N_RADIAL + 1)
         axial_positions = np.linspace(
-            0.0, LENGTH, N_AXIAL + 1
+            0.0, HALF_LENGTH, N_AXIAL + 1
         )
         dr = RADIUS / N_RADIAL
-        dz = LENGTH / N_AXIAL
+        dz = HALF_LENGTH / N_AXIAL
         node_count = (N_RADIAL + 1) * (N_AXIAL + 1)
 
         state = np.concatenate(
@@ -1603,7 +1375,7 @@ def check_rebound() -> None:
 MODES = {
     "compare": ("RK4 与 BDF 求解器对比", check_compare),
     "grid": ("网格收敛性检验", check_grid),
-    "temporal": ("时间步长收敛性检验（RK4 路径）", check_temporal),
+    "temporal": ("时间积分精度检验（生产BDF）", check_temporal),
     "conservation": ("全局水分守恒检验", check_conservation),
     "steady": ("均匀稳态检验", check_steady),
     "rebound": ("表面含水率回升检验", check_rebound),
@@ -1611,6 +1383,7 @@ MODES = {
 
 
 def main() -> int:
+    global MATERIAL_MODE, N_RADIAL, N_AXIAL
     parser = argparse.ArgumentParser(
         prog="solve_problem3.py",
         description="第三问：二维轴对称长时干燥模型（求解 + 检验，唯一入口）。",
@@ -1629,14 +1402,18 @@ def main() -> int:
         default=None,
         help="时间推进方式，默认取模块常量 SOLVER（bdf）",
     )
-    parser.add_argument("--no-xlsx", action="store_true", help="不写 result3.xlsx")
-    parser.add_argument(
-        "--xlsx", type=Path, default=None, help="把交付件写到指定路径（默认项目根 result3.xlsx）"
-    )
+    parser.add_argument("--material-mode", choices=["specified", "staged"], default=MATERIAL_MODE)
+    parser.add_argument("--nr", type=int, default=N_RADIAL)
+    parser.add_argument("--nz", type=int, default=N_AXIAL, help="半长度分段数")
     args = parser.parse_args()
+    if args.nr < 2 or args.nz < 2:
+        parser.error("网格分段数至少2")
+    MATERIAL_MODE, N_RADIAL, N_AXIAL = args.material_mode, args.nr, args.nz
+    if MATERIAL_MODE == "staged":
+        print("物性：6780 s前附录2，之后附录3（额外分段假设；题面统一附录用 --material-mode specified）")
 
     if args.mode in ("solve", "all"):
-        run_solve(args.solver, write_xlsx=not args.no_xlsx, xlsx_path=args.xlsx)
+        run_solve(args.solver)
 
     if args.mode == "all":
         for label, function in MODES.values():

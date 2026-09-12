@@ -17,11 +17,17 @@
 数值：有限体积法(守恒形式) + theta 隐式格式
   温度：Crank-Nicolson (theta=0.5, 线性)
   水分：Crank-Nicolson (theta=0.5, 非线性 D(C) 用 Picard 迭代)
+  起步：t<5s 用几何步长 dt=clip(0.05*t,0.0025,dt)，消除 t=0 表面边界层误差
 """
 import numpy as np
 import openpyxl
 import os, sys
 from scipy.signal import savgol_filter
+from scipy.linalg import solve_banded
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent.parent))
+from drying_common import (face_mean, NONLINEAR_RTOL, NONLINEAR_MAXITER, ATOL_C,
+                           ensure_deliverable_writable, save_deliverable)
 
 try:
     sys.stdout.reconfigure(encoding='utf-8')
@@ -30,6 +36,12 @@ except Exception:
 
 # Savitzky-Golay 保形滤波参数（与论文一致：窗宽 31 点 = 31 min，三阶多项式）
 SMOOTH_WIN, SMOOTH_ORDER = 31, 3
+
+# 起步几何步长：初始含水率与表面对流边界条件在 t=0 处不相容，
+# 表面浓度按 sqrt(t) 变化，均匀大步长会把该边界层误差放大到 1e-3 量级。
+# 取 dt_k = clip(g* t_k, dt_min, dt_max)，只在前几秒加密，代价可忽略。
+EARLY_DT_MIN = 0.0025   # s，起步最小步长
+EARLY_DT_GROWTH = 0.05  # 每步步长按已推进时间的 5% 增长
 
 BASE = os.path.dirname(os.path.abspath(__file__))          # .../CUMCM/Problem I
 PROJECT = os.path.dirname(BASE)                            # .../CUMCM
@@ -92,17 +104,9 @@ class DryingSim:
         self.Am = 2.0 * rm
 
     def _thomas(self, a, b, c, d):
-        n = len(b)
-        cp_ = np.zeros(n); dp_ = np.zeros(n)
-        cp_[0] = c[0] / b[0]; dp_[0] = d[0] / b[0]
-        for i in range(1, n):
-            denom = b[i] - a[i] * cp_[i - 1]
-            cp_[i] = c[i] / denom
-            dp_[i] = (d[i] - a[i] * dp_[i - 1]) / denom
-        x = np.zeros(n); x[-1] = dp_[-1]
-        for i in range(n - 2, -1, -1):
-            x[i] = dp_[i] - cp_[i] * x[i + 1]
-        return x
+        band=np.zeros((3,len(b)))
+        band[0,1:]=c[:-1]; band[1]=b; band[2,:-1]=a[1:]
+        return solve_banded((1,1),band,d,check_finite=False)
 
     def solve_heat(self, T_old, dt, Tair_new, Tair_old, theta=0.5):
         """温度一步：Crank-Nicolson"""
@@ -142,8 +146,7 @@ class DryingSim:
         S_old  = np.zeros(N + 1); S_old[N]  = 2.0 * self.R * self.hm * Cair_old
 
         def build(C):
-            Cmid = 0.5 * (C[:-1] + C[1:])
-            Dp = self.Dfunc(Cmid)
+            Dp = face_mean(self.Dfunc, (C[:-1],), (C[1:],))
             Dm = np.zeros(N + 1); Dm[1:] = Dp
             a = np.zeros(N + 1); b = np.zeros(N + 1); c = np.zeros(N + 1)
             a[1:N] =  Dm[1:N] * self.Am[1:N] / dr
@@ -167,45 +170,65 @@ class DryingSim:
 
         mdt = m / dt
         C_new = C_old.copy()
-        for _ in range(3):   # Picard 迭代
+        for _ in range(NONLINEAR_MAXITER):
+            previous = C_new.copy()
             a, b, c = build(C_new)
             lhs_b = mdt - theta * b
             lhs_a = -theta * a
             lhs_c = -theta * c
             rhs = mdt * C_old + (1.0 - theta) * LCold + theta * S_next + (1.0 - theta) * S_old
             C_new = self._thomas(lhs_a, lhs_b, lhs_c, rhs)
+            if np.min(C_new)<=0 or not np.isfinite(C_new).all():
+                raise RuntimeError("水分迭代出现非法状态")
+            scale=ATOL_C+NONLINEAR_RTOL*np.maximum(np.abs(C_new),np.abs(previous))
+            if np.max(np.abs(C_new-previous)/scale)<=1:
+                break
+        else:
+            raise RuntimeError("水分非线性迭代未达到统一容差")
         return C_new
 
 
 def run(N=400, dt=0.5, t_end=1800.0, Tair_interp=None, Cair_interp=None):
     """推进 t∈[0,t_end]，返回 (t_out, T_hist, C_hist)"""
     sim = DryingSim(R, rho, cp, k, h, hm, T0, C0, D_coeff, N=N)
-    n_steps = int(round(t_end / dt))
-    step_per_s = max(1, int(round(1.0 / dt)))
-    t_out = np.arange(1, int(t_end) + 1)
-    T_hist = np.zeros((len(t_out), N + 1))
-    C_hist = np.zeros((len(t_out), N + 1))
-
-    T = np.full(N + 1, T0); C = np.full(N + 1, C0)
-    Tair_prev, Cair_prev = Tair_interp(0.0), Cair_interp(0.0)
-    out_idx = 0
-    for n in range(1, n_steps + 1):
-        t_new = n * dt
-        Tair_new = Tair_interp(t_new); Cair_new = Cair_interp(t_new)
-        T = sim.solve_heat(T, dt, Tair_new, Tair_prev, theta=0.5)
-        C = sim.solve_mass(C, dt, Cair_new, Cair_prev, theta=0.5)
-        Tair_prev, Cair_prev = Tair_new, Cair_new
-        if n % step_per_s == 0 and out_idx < len(t_out):
-            T_hist[out_idx] = T; C_hist[out_idx] = C; out_idx += 1
+    if N<2 or dt<=0 or t_end<=0 or t_end!=int(t_end):
+        raise ValueError("网格至少2、dt为正、时长为正整数秒")
+    if Tair_interp is None or Cair_interp is None:
+        t_air, T_air, C_air = load_attachment1(ATTACH1)
+        Tair_interp = lambda tt: np.interp(tt, t_air, T_air)
+        Cair_interp = lambda tt: np.interp(tt, t_air, C_air)
+    t_out=np.arange(1,int(t_end)+1)
+    T_hist=np.empty((len(t_out),N+1)); C_hist=np.empty_like(T_hist)
+    T=np.full(N+1,T0); C=np.full(N+1,C0)
+    now=0.; out_idx=0; cumulative=0.
+    initial=float(sim.V@C/sim.V.sum())
+    while now<t_end-1e-10:
+        base=min(dt,max(EARLY_DT_MIN,EARLY_DT_GROWTH*now))
+        target=min(now+base,float(t_out[out_idx]),t_end)
+        step=target-now
+        ta0,ca0=Tair_interp(now),Cair_interp(now)
+        ta1,ca1=Tair_interp(target),Cair_interp(target)
+        old_surface=C[-1]
+        T=sim.solve_heat(T,step,ta1,ta0)
+        C=sim.solve_mass(C,step,ca1,ca0)
+        cumulative+=step*sim.R*sim.hm*((ca0-old_surface)+(ca1-C[-1]))/sim.V.sum()
+        now=target
+        if abs(now-t_out[out_idx])<1e-9:
+            T_hist[out_idx]=T; C_hist[out_idx]=C; out_idx+=1
+    error=abs(float(sim.V@C/sim.V.sum())-initial-cumulative)
+    run.last_balance=dict(absolute_balance_error=error,
+        relative_balance_error=error/max(abs(cumulative),1e-12))
     return t_out, T_hist, C_hist
 
 
 def main():
+    ensure_deliverable_writable(OUT_XLSX)      # 交付件只写 result1.xlsx，占用时提前报错
     t_air, T_air, C_air = load_attachment1(ATTACH1)
     Tair_interp = lambda tt: np.interp(tt, t_air, T_air)
     Cair_interp = lambda tt: np.interp(tt, t_air, C_air)
 
-    N = 1600
+    # 空间二阶收敛：t=1s 表层值误差 N=1600 约 6.3e-5（略超 5e-5），N=3200 约 1.6e-5。
+    N = 3200
     dt = 0.25
     t_out, T_hist, C_hist = run(N=N, dt=dt, t_end=1800.0,
                                 Tair_interp=Tair_interp, Cair_interp=Cair_interp)
@@ -251,8 +274,7 @@ def main():
             c1.number_format = "0.0000"
             c2 = ws2.cell(2 + i, 2 + j, round(float(C_hist[i, idx]), 4))
             c2.number_format = "0.0000"
-    wb.save(OUT_XLSX)
-    print("\nsaved ->", OUT_XLSX)
+    save_deliverable(wb, OUT_XLSX)
 
 
 if __name__ == "__main__":

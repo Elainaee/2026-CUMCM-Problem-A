@@ -1,10 +1,11 @@
-"""问题二：计算三维温度、水分进程并写出 result2.xlsx。
+"""问题二：二维轴对称半长度温度、水分进程并写出 result2.xlsx。
 
 运行：python solve_result2.py
 依赖：numpy、scipy、openpyxl。题目附件须位于上级目录的“附件”文件夹。
 """
 from pathlib import Path
 import argparse
+import os
 import sys
 import time
 
@@ -22,6 +23,8 @@ from scipy.signal import savgol_filter
 ROOT = Path(__file__).resolve().parent          # .../CUMCM/Problem II
 PROJECT = ROOT.parent                           # .../CUMCM
 ATTACHMENTS = PROJECT / "附件"
+sys.path.insert(0, str(PROJECT))
+from drying_common import RTOL, ensure_deliverable_writable, save_deliverable
 
 # Savitzky-Golay 保形滤波参数（与论文一致：窗宽 31 点 = 31 min，三阶多项式）
 SMOOTH_WIN, SMOOTH_ORDER = 31, 3
@@ -79,139 +82,65 @@ def detect_critical_time(air, tail_start=10800, window=1200, persistence=1800):
     raise RuntimeError("附件1中未识别到满足持续性要求的恒温阶段")
 
 
-def material(T, C, drying_stage):
-    """临界时刻前用附件2，临界时刻后用附件3，不混合物性。"""
-    if np.min(C) <= 0:
-        raise RuntimeError("含水率出现非正值，计算停止")
-    if drying_stage:
-        rho = 650 + 128 * C
-        cp = 1450 + 2736 * C / (C + 1)
-        k = 0.21 + 0.38 * C / (C + 1)
-        D = 2.4e-3 * np.exp(-0.45 / C - 3850 / (T + 273.15))
-    else:
-        rho = np.full_like(C, 820.0)
-        cp = np.full_like(C, 2600.0)
-        k = np.full_like(C, 0.36)
-        D = 7e-9 * np.exp(-0.89 / C)
-    return rho * cp, k, D
+def material(T,C,drying_stage):
+    """附录2/3公式对照接口；生产计算由共用核心决定物性阶段。"""
+    if np.min(C)<=0:
+        raise ValueError("含水率必须为正")
+    core=model_core()
+    time=core.CRITICAL_TIME if drying_stage else 0.
+    rho,cp,k=core.material_properties(C,time)
+    return rho*cp,k,core.moisture_diffusivity(C,T,time)
 
 
-class CylinderGrid:
-    """完整圆柱控制体：径向、周向、轴向均保留。"""
-    def __init__(self, nr, nphi, nz):
-        self.nr, self.nphi, self.nz = nr, nphi, nz
-        self.shape = (nr, nphi, nz)
-        self.dr, self.dphi, self.dz = 0.02 / nr, 2 * np.pi / nphi, 0.25 / nz
-        self.r = (np.arange(nr) + 0.5) * self.dr
-        self.z = (np.arange(nz) + 0.5) * self.dz - 0.125
-        ids = np.arange(nr * nphi * nz).reshape(self.shape)
-        self.volume = np.broadcast_to((self.r * self.dr * self.dphi * self.dz)[:, None, None], self.shape).ravel().copy()
-
-        ii, jj, gg = [], [], []
-
-        def connect(left, right, conductance):
-            ii.extend(left.ravel())
-            jj.extend(right.ravel())
-            gg.extend(np.broadcast_to(conductance, left.shape).ravel())
-
-        connect(ids[:-1], ids[1:], ((np.arange(1, nr) * self.dr) * self.dphi * self.dz / self.dr)[:, None, None])
-        connect(ids, np.roll(ids, -1, axis=1), (self.dr * self.dz / (self.r * self.dphi))[:, None, None])
-        connect(ids[:, :, :-1], ids[:, :, 1:], (self.r * self.dr * self.dphi / self.dz)[:, None, None])
-        self.i, self.j, self.g = np.asarray(ii), np.asarray(jj), np.asarray(gg)
-
-        # 侧面及两个端面是对流边界；轴线没有额外边界面。
-        self.boundary_ids = np.r_[ids[-1].ravel(), ids[:, :, 0].ravel(), ids[:, :, -1].ravel()]
-        end_area = np.broadcast_to((self.r * self.dr * self.dphi)[:, None], (nr, nphi)).ravel()
-        self.boundary_area = np.r_[np.full(nphi * nz, 0.02 * self.dphi * self.dz), end_area, end_area]
-        self.boundary_distance = np.r_[np.full(nphi * nz, self.dr / 2), np.full(2 * nr * nphi, self.dz / 2)]
-
-    def matrix(self, coefficient, h):
-        g = self.g * 2 * coefficient[self.i] * coefficient[self.j] / (coefficient[self.i] + coefficient[self.j])
-        b = self.boundary_area / (self.boundary_distance / coefficient[self.boundary_ids] + 1 / h)
-        diagonal = np.bincount(self.i, g, minlength=len(coefficient)) + np.bincount(self.j, g, minlength=len(coefficient))
-        diagonal += np.bincount(self.boundary_ids, b, minlength=len(coefficient))
-        K = coo_matrix((-np.r_[g, g], (np.r_[self.i, self.j], np.r_[self.j, self.i])), shape=(len(coefficient), len(coefficient))).tocsr()
-        return K + diags(diagonal), np.bincount(self.boundary_ids, b, minlength=len(coefficient))
-
-    def implicit_step(self, old, guess, storage, coefficient, h, ambient, dt):
-        K, b = self.matrix(coefficient, h)
-        m = storage * self.volume / dt
-        A = K + diags(m)
-        diagonal_inverse = 1 / A.diagonal()
-        preconditioner = LinearOperator(A.shape, matvec=lambda x: diagonal_inverse * x)
-        value, info = cg(A, m * old + b * ambient, x0=guess, M=preconditioner, rtol=1e-9, atol=1e-12, maxiter=900)
-        if info != 0:
-            raise RuntimeError(f"线性迭代未收敛（info={info}）")
-        return value
-
-    def middle_profile(self, field, coefficient, h, ambient):
-        f = field.reshape(self.shape)
-        c = coefficient.reshape(self.shape)
-        profile = (f[:, 0, self.nz // 2 - 1] + f[:, 0, self.nz // 2]) / 2
-        cp = (c[:, 0, self.nz // 2 - 1] + c[:, 0, self.nz // 2]) / 2
-        center = (9 * profile[0] - profile[1]) / 8
-        surface = ((cp[-1] / (self.dr / 2)) * profile[-1] + h * ambient) / (cp[-1] / (self.dr / 2) + h)
-        return np.interp(np.arange(21) * 0.001, np.r_[0, self.r, 0.02], np.r_[center, profile, surface])
+def model_core():
+    """复用第三问半长度核心，避免物性、边界和面系数出现两份实现。"""
+    import importlib.util
+    name="cumcm_problem3_core"
+    if name not in sys.modules:
+        spec=importlib.util.spec_from_file_location(name, PROJECT/"Problem III/solve_problem3.py")
+        module=importlib.util.module_from_spec(spec)
+        sys.modules[name]=module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
 
 
-def solve(nr=20, nphi=6, nz=32, dt=5, end=10800, export=True):
-    grid = CylinderGrid(nr, nphi, nz)
-    # 对流边界条件：用 Savitzky-Golay 平滑后的环境数据。
-    # 阶段分界时刻的统计判定：用原始数据——σ 应反映实测噪声；若改用平滑序列
-    # 的 MAD，量到的只是滤波器自身的平坦度（σ 会被压小约 7 倍，t_c 随之后移）。
-    air = read_air_data(smooth=True)
-    critical_time, critical = detect_critical_time(read_air_data(smooth=False))
-    print(
-        f"识别临界时刻 {critical_time:.0f} s（{critical_time / 3600:.4f} h）："
-        f"平台 {critical['plateau']:.4f} ℃，窗内斜率 {critical['window_slope']:.4f} ℃/min"
-    )
-    T = np.full(np.prod(grid.shape), 28.0)
-    C = np.full_like(T, 2.55)
-    recorded_t, recorded_T, recorded_C = [0.0], [np.full(21, 28.0)], [np.full(21, 2.55)]
-    started = time.time()
+def solve(nr=320, nphi=None, nz=40, dt=300., end=10800, export=True, rtol=RTOL,
+          material_mode=None, xlsx_path=None):
+    """二维轴对称半长度；nz为半长度分段数，dt为BDF最大步长上限。
 
-    while recorded_t[-1] < end:
-        old_time = recorded_t[-1]
-        t = min(old_time + dt, end)
-        if old_time < critical_time < t:
-            t = critical_time
-        actual_dt = t - old_time
-        air_T = np.interp(t, air[:, 0], air[:, 1])
-        air_C = np.interp(t, air[:, 0], air[:, 2])
-        old_T, old_C = T.copy(), C.copy()
-        drying_stage = old_time >= critical_time
-
-        for _ in range(25):
-            capacity, conductivity, _ = material(T, C, drying_stage)
-            new_T = grid.implicit_step(old_T, T, capacity, conductivity, 25.0, air_T, actual_dt)
-            _, _, diffusivity = material(new_T, C, drying_stage)
-            new_C = grid.implicit_step(old_C, C, np.ones_like(C), diffusivity, 8e-7, air_C, actual_dt)
-            change = max(np.max(np.abs(new_T - T)) / 50, np.max(np.abs(new_C - C)) / 2.55)
-            T, C = new_T, new_C
-            if change < 1e-8:
-                break
-        else:
-            raise RuntimeError("热质耦合迭代未收敛")
-
-        _, conductivity, diffusivity = material(T, C, drying_stage)
-        recorded_t.append(t)
-        recorded_T.append(grid.middle_profile(T, conductivity, 25.0, air_T))
-        recorded_C.append(grid.middle_profile(C, diffusivity, 8e-7, air_C))
-
-        if t % 1800 == 0:
-            print(f"{t / 3600:.1f} h: 中心温度 {recorded_T[-1][0]:.3f} ℃，中心含水率 {recorded_C[-1][0]:.3f}")
-
-    seconds = np.arange(1, end + 1, dtype=int)
-    sampled_T = np.column_stack([np.interp(seconds, recorded_t, np.asarray(recorded_T)[:, j]) for j in range(21)])
-    sampled_C = np.column_stack([np.interp(seconds, recorded_t, np.asarray(recorded_C)[:, j]) for j in range(21)])
+    前4h环境数据每60s变化，drying_common 的统一规则会把最大步长压到60s，
+    因此本问默认 dt=300 与第三、四问同一套时间步策略。
+    """
+    if nphi is not None:
+        raise ValueError("半长度轴对称模型不再使用nphi；请删除周向网格参数")
+    if end<=0 or end!=int(end):
+        raise ValueError("输出时长必须为正整数秒")
+    started=time.time()
+    if export:      # 交付件只写 result2.xlsx，占用时在长算前报错
+        ensure_deliverable_writable(PROJECT / "result2.xlsx" if xlsx_path is None else Path(xlsx_path))
+    core=model_core()
+    with core._overrides(MATERIAL_MODE=material_mode or core.MATERIAL_MODE):
+        result=core.simulate_bdf(n_radial=nr,n_axial=nz,rtol=rtol,
+            max_step=dt,max_duration=end,record_interval=1.,stop_at_threshold=False)
+    seconds=result["time_s"][1:].astype(int)
+    sampled_T=result["temperature_c"][1:]
+    sampled_C=result["moisture_kg_per_kg"][1:]
+    for t in range(1800,int(end)+1,1800):
+        print(f"{t/3600:.1f} h: 中心温度 {sampled_T[t-1,0]:.6f}，中心含水率 {sampled_C[t-1,0]:.6f}")
     if export:
-        write_result(seconds, sampled_T, sampled_C)
-    print(f"完成，用时 {time.time() - started:.1f} s")
-    return seconds, sampled_T, sampled_C
+        write_result(seconds,sampled_T,sampled_C,xlsx_path)
+    print("干质量归一化守恒:",result["conservation"])
+    print(f"完成，用时 {time.time()-started:.1f} s")
+    return seconds,sampled_T,sampled_C
 
 
-def write_result(seconds, temperature, moisture):
-    """保持附件3的两张结果表结构，写到 CUMCM 根目录的 result2.xlsx。"""
+def write_result(seconds, temperature, moisture, output_path=None):
+    """保持附件3的两张结果表结构，原子写到 CUMCM 根目录的 result2.xlsx。
+
+    先写同目录临时文件再替换目标；目标被 Excel 等程序占用时删除临时文件并报错，
+    不生成带 _pending 的替代结果：交付件始终只有 result2.xlsx。
+    """
+    target = PROJECT / "result2.xlsx" if output_path is None else Path(output_path)
     wb = openpyxl.load_workbook(ATTACHMENTS / "附件3" / "result2.xlsx")
     for name, values in (("温度", temperature), ("水分浓度", moisture)):
         ws = wb[name]
@@ -226,18 +155,19 @@ def write_result(seconds, temperature, moisture):
             for col, value in enumerate(values[row - 2], start=2):
                 ws.cell(row, col, round(float(value), 4)).number_format = "0.0000"
         ws.freeze_panes = "B2"
-    wb.save(PROJECT / "result2.xlsx")
+    return save_deliverable(wb, target)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="计算问题二的三维温度、水分进程")
-    parser.add_argument("--nr", type=int, default=20, help="径向控制体数")
-    parser.add_argument("--nphi", type=int, default=6, help="周向控制体数")
-    parser.add_argument("--nz", type=int, default=32, help="轴向控制体数")
-    parser.add_argument("--dt", type=float, default=5, help="时间步长/s")
+    parser = argparse.ArgumentParser(description="计算问题二的二维轴对称半长度温度、水分进程")
+    parser.add_argument("--nr", type=int, default=320, help="径向分段数；320=20×16，交付表1mm列正好是节点")
+    parser.add_argument("--nz", type=int, default=40, help="半长度轴向分段数")
+    parser.add_argument("--dt", type=float, default=300, help="BDF最大时间步长上限/s（前4h按共用规范压到60s）")
     parser.add_argument("--end", type=int, default=10800, help="结束时间/s")
-    parser.add_argument("--no-export", action="store_true", help="只试算，不写 result2.xlsx")
+    parser.add_argument("--rtol", type=float, default=RTOL)
+    parser.add_argument("--material-mode", choices=["specified","staged"], default=None)
     args = parser.parse_args()
-    if args.nr < 2 or args.nphi < 3 or args.nz < 2 or args.dt <= 0:
+    if args.nr < 2 or args.nz < 2 or args.dt <= 0 or args.rtol <= 0:
         parser.error("网格数过小或时间步长不合法")
-    solve(args.nr, args.nphi, args.nz, args.dt, args.end, not args.no_export)
+    solve(nr=args.nr, nz=args.nz, dt=args.dt, end=args.end,
+          rtol=args.rtol, material_mode=args.material_mode)
