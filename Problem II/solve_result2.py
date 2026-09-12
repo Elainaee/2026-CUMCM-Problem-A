@@ -1,7 +1,7 @@
 """问题二：二维轴对称半长度温度、水分进程并写出 result2.xlsx。
 
 运行：python solve_result2.py
-依赖：numpy、scipy、openpyxl。题目附件须位于上级目录的“附件”文件夹。
+依赖：numpy、scipy、openpyxl。
 """
 from pathlib import Path
 import argparse
