@@ -1,4 +1,3 @@
-
 % !TEX program = xelatex
 % !TEX encoding = UTF-8
 % ctexart + fontspec 需 XeLaTeX：加此行后 VSCode/TeXstudio/latexmk 会自动选对引擎
@@ -33,8 +32,12 @@
 \usepackage{subcaption}        % 子图（并排图片）
 \usepackage{multirow}          % 表格跨行
 \usepackage{tikz}              % 流程图、示意图
-\usetikzlibrary{arrows.meta,shapes.geometric,positioning}
+\usetikzlibrary{arrows.meta,shapes.geometric,positioning,calc}
 
+\usepackage{tabularx}   % 提供 tabularx 环境和 X 列
+\usepackage{booktabs}   % 提供 \toprule, \midrule, \cmidrule 等
+\usepackage{multirow}   % 提供 \multirow 命令
+\usepackage{array}      % 确保 >{} 语法和 \arraybackslash 可用
 % ---------------------------------------------------------------------
 % 四、算法与代码
 % ---------------------------------------------------------------------
@@ -49,7 +52,7 @@
     language=Python,
     inputencoding=utf8,
     extendedchars=true,
-    basicstyle=\ttfamily\small,
+    basicstyle=\ttfamily\footnotesize,
     numbers=left,
     numberstyle=\scriptsize\color{gray},
     numbersep=6pt,
@@ -95,38 +98,65 @@
 % 摘 要 页（占满第一页）
 % =====================================================================
 \begin{center}
-{\LARGE\bfseries 论文标题：在此填写你的论文题目}\\[1.5em]
+{\LARGE\bfseries 圆柱形药材烘干过程的传热传质建模与求解}\\[1.5em]
 {\large\bfseries 摘~~要}\\[0.8em]
 \end{center}
 
-% 在这里填写你的摘要正文。
-% 建议直接粘贴真实摘要文字：
-%   - 摘要不足一页时，下面的 \vfill 会把内容推到顶部、底部留白；
-%   - 摘要超过一页时，会自然分页。
-% 摘要写作要点（供参考，非固定格式）：
-%   1. 问题背景与总目标（一两句）；
-%   2. 针对问题一/二/三……分别写：用了什么模型、什么算法、得到什么关键结果；
-%   3. 关键词。
+干燥是决定中药材成品品质的关键工序，热风烘干包含预热平衡与恒温干燥两个阶段。本文以长
+$25\ \mathrm{cm}$、半径 $2\ \mathrm{cm}$ 的圆柱形药材为对象，建立内部温度场与水分浓度场时空
+演化的数学模型，采用守恒型\textbf{有限体积法}离散空间、隐式格式推进时间，进而确定满足含水率
+指标的烘干时长。
 
-（摘要正文占位……）
+\textbf{针对问题一}，因长径比 $L/R=12.5$、轴向端部效应可忽略，将药材退化为
+\textbf{无限长圆柱}，建立径向一维非稳态传热--传质模型：温度场由 Fourier 定律描述，水分场由
+Fick 第二定律描述，中心轴取零通量条件，表面取 Robin 型对流换热与对流传质条件；烘房时变环境
+取自附件1，并经 \textbf{Savitzky--Golay 保形滤波}平滑。本问 $\rho,c_p,k$ 为
+常数且 $D$ 仅依赖 $C$，传热与传质\textbf{解耦}，故空间以有限体积法离散、时间以
+\textbf{Crank--Nicolson} 格式推进，传质方程因 $D(C)$ 非线性每步施行 \textbf{Picard 迭代}。
+结果表明 $1800\ \mathrm{s}$ 时表面温度升至 $\mathbf{36.7710\ ^\circ C}$、中心仅
+$\mathbf{33.5711\ ^\circ C}$；表面含水率降至 $\mathbf{1.5102\ kg/kg}$，距中心
+$1\ \mathrm{cm}$ 以内仍高于 $2.53\ \mathrm{kg/kg}$，呈明显\textbf{“干壳湿芯”}特征。
 
-\textbf{针对问题一}，……（模型名）……得到……（关键结论）。
+\textbf{针对问题二}，恒温干燥阶段 $\rho,c_p,k$ 均随含水率变化、$D$ 含 Arrhenius 温度项，传热与
+传质\textbf{双向耦合}；且过程长达 $2\sim3$ 天，端部效应不可忽略，故不作降维，直接在柱坐标下
+建立\textbf{三维模型}，径向 $20\times$ 周向 $6\times$ 轴向 $32$ 共 $3840$ 个控制体，面通量以
+\textbf{调和平均}折算面导率，采用\textbf{后向欧拉}格式（$\Delta t=5\ \mathrm{s}$）配合
+\textbf{Picard 迭代}与\textbf{共轭梯度法}求解。两阶段分界时刻 $t_c$ 题目未给出，本文以尾段中位
+温度与 MAD 给出稳态温度带，结合 $20\ \mathrm{min}$ 滑动均温与升温斜率双条件及 $30\ \mathrm{min}$
+持续性要求，识别得 $\mathbf{t_c=6780\ s=1.8833\ h}$；切换处只换物性参数、不重置初值。结果表明
+$3\ \mathrm{h}$ 时中心温度 $\mathbf{49.8952\ ^\circ C}$、径向温差收缩至
+$0.06\ ^\circ\mathrm{C}$；中心含水率 $\mathbf{1.9237\ kg/kg}$、表面
+$1.0791\ \mathrm{kg/kg}$，呈“内湿外干”分布。
 
-\textbf{针对问题二}，……（模型名）……得到……（关键结论）。
+\textbf{针对问题三}，因含水率沿径向由外向内递增，中心 $r=0$ 处最高且下降最慢，故“各处水分
+浓度均低于 $0.15\ \mathrm{kg/kg}$”等价于中心含水率达标。在二维轴对称模型上采用二阶段
+\textbf{Gauss--Legendre 隐式 RK4} 推进（$\omega=0.8$ 阻尼不动点迭代，
+$\Delta t=2.5\ \mathrm{s}$），以守恒型有限体积格式保证水分守恒；当全域最大含水率首次低于
+$0.15\ \mathrm{kg/kg}$ 时插值细化，得烘干总时长 $\mathbf{t_{\mathrm{dry}}=56.9702\ h}$，
+此时全域最大含水率为 $\mathbf{0.1446\ kg/kg}$。
 
-\textbf{针对问题三}，……（模型名）……得到……（关键结论）。
-
-\textbf{针对问题四}，……（模型名）……得到……（关键结论）。
+\textbf{针对问题四}，考虑水分流失导致的尺寸收缩：由附件2 的半径数据取
+\textbf{均匀径向收缩、轴向长度不变}（半径 $R(t)$ 收缩至约 $1.2\ \mathrm{cm}$，轴向仍为
+$25\ \mathrm{cm}$），求解域外边界随时刻移动，构成\textbf{移动边界问题}。采用归一化坐标
+$\xi=r/R(t)$ 把移动区间映射到固定区间 $[0,1]$，径向扩散项因此出现 $1/R^2(t)$ 几何因子；
+含水率取\textbf{干基}定义并视为随固体骨架一起运动，控制方程\textbf{不引入体积浓度稀释项}；
+物性自初始时刻起统一采用附录4。以径向 $96\times$ 半轴向 $80$ 个控制体离散，面扩散系数取
+Kirchhoff 积分均值，时间以\textbf{自适应 BDF} 推进，并以全域最大含水率首次低于
+$0.15\ \mathrm{kg/kg}$ 为终止事件，得烘干时长
+$\mathbf{t_{\mathrm{dry}}=51.0908\ \mathrm{h}}$（$183927\ \mathrm{s}$），此时半径收缩至
+$1.2000\ \mathrm{cm}$、全域最大含水率 $0.14999987\ \mathrm{kg/kg}$。
 
 \medskip
-关键词:\textbf{关键词1~关键词2~关键词3~关键词4~关键词5}
+关键词:\textbf{药材烘干~传热传质~有限体积法~移动边界~隐式 Runge--Kutta 法}
 
 \vfill
 \clearpage
 % ---------------- 摘要页结束 ----------------
 
 % =====================================================================
-% 章节编号：一级标题用中文数字（一、二、三），二级用阿拉伯数字（1.1）
+% 章节编号：一级标题用中文数字（一、二、三），二级用阿拉伯数字（5.1）
+% 说明：四个问题统一归入“五、模型的建立与求解”之下，用二级标题区分，
+%       避免章节序号与问题号（如一、二、三）互相冲突。
 % =====================================================================
 \renewcommand{\thesection}{\chinese{section}}
 \renewcommand{\thesubsection}{\arabic{section}.\arabic{subsection}}
@@ -161,7 +191,7 @@
     规律的数学模型（经验公式统一采用附录3），并按表3、表4格式给出前 $3\ \mathrm{h}$ 内
     每隔 $0.5\ \mathrm{h}$、距药材中心 $0\sim2\ \mathrm{cm}$ 处的温度与水分浓度，完整结果
     保存至 result2.xlsx。
-    \item \textbf{问题三（满足含水率指标的烘干时间）}：以药材各处水分浓度均不高于
+    \item \textbf{问题三（满足含水率指标的烘干时间）}：以药材各处水分浓度均低于
     $0.15\ \mathrm{kg/kg}$ 作为干燥达标的判据，确定药材烘干所需的总时间（单位：$\mathrm{h}$），
     并按表5格式给出每隔 $6\ \mathrm{h}$、距药材中心每隔 $0.5\ \mathrm{cm}$ 处的水分浓度，
     完整结果保存至 result3.xlsx。
@@ -178,96 +208,215 @@
 本文研究圆柱形中药材在热风烘干过程中温度场与水分浓度场的时空演化规律。四个子问题由浅入深、
 层层递进：问题一建立预热平衡阶段的基础传热--传质模型；问题二将其推广至持续 $2\sim3$ 天的
 完整烘干过程，并引入随温湿度变化的物性参数；问题三在问题二模型的基础上确定满足含水率指标的
-烘干时间；问题四进一步考虑水分流失引起的尺寸收缩，将固定域问题推广为移动边界问题。下面逐一分析。
+烘干时间；问题四进一步考虑水分流失引起的尺寸收缩，将固定域问题推广为移动边界问题。
 
 \subsection{问题一的分析}
-问题一属于典型的\textbf{非稳态传热--传质}问题，在数学上归结为圆柱域上一组抛物型偏微分方程的
-初边值问题。其难点主要有二：其一，药材长径比很大（$L/R=12.5$），直接进行三维瞬态求解代价
-过高，需要作几何降维；其二，烘房温度与空气含湿量是时变边界条件，且实测数据存在测量噪声，
-需先平滑处理。
+问题一属于\textbf{非稳态传热--传质}问题，在数学上归结为圆柱域上一组抛物型偏微分方程的初边值
+问题。其难点有二：药材长径比很大（$L/R=12.5$），直接三维瞬态求解代价过高，需作几何降维；
+烘房温湿度为时变边界条件，且实测数据含测量噪声，需先平滑处理。
 
-\textbf{建模思路}：由于 $L\gg R$，忽略轴向端部效应与周向不均匀性，将圆柱药材退化为
-\textbf{无限长圆柱}，问题降维为一维径向问题，仅研究 $r\in[0,R]$。温度场由 Fourier 热传导
-定律描述，水分场由 Fick 第二定律描述；中心轴处由轴对称性给出诺伊曼零通量条件，表面处由
-对流换热与对流传质给出 Robin 型边界条件，环境时变量 $T_a(t)$、$C_a(t)$ 取自附件1并经
-Savitzky--Golay 平滑。
+\textbf{建模思路}：因 $L\gg R$，忽略轴向端部效应与周向不均匀性，将圆柱药材退化为\textbf{无限长
+圆柱}，问题降维为一维径向问题，仅研究 $r\in[0,R]$。温度场由 Fourier 定律描述，水分场由 Fick
+第二定律描述；中心轴由轴对称性给出零通量条件，表面为 Robin 型对流边界，环境时变量 $T_a(t)$、
+$C_a(t)$ 取自附件1 并经 Savitzky--Golay 平滑。
 
-\textbf{求解思路}：附录2 中 $\rho,c_p,k,h,h_m$ 均为常数，扩散系数 $D$ 仅依赖水分浓度 $C$
-而与温度 $T$ 无关，故传热方程与传质方程相互\textbf{解耦}，可分别独立求解。空间方向采用
-\textbf{有限体积法}（守恒形式）离散，时间方向采用 \textbf{Crank--Nicolson} 格式（二阶精度、
-无条件稳定）；传质方程因 $D(C)$ 非线性，每步采用 \textbf{Picard 迭代}（滞后系数）线性化。
-最终按表1、表2给出指定时刻、指定径向位置的结果，并将完整结果保存至 result1.xlsx。
+\textbf{求解思路}：附录2 中 $\rho,c_p,k,h,h_m$ 均为常数、$D$ 仅依赖 $C$ 而与 $T$ 无关，故传热
+与传质\textbf{解耦}，可分别独立求解。空间采用\textbf{有限体积法}（守恒形式）离散，时间采用
+\textbf{Crank--Nicolson} 格式；传质方程因 $D(C)$ 非线性，每步以 \textbf{Picard 迭代}线性化。
 
 \subsection{问题二的分析}
-问题二将研究范围由 $30$ 分钟的预热阶段扩展到持续 $2\sim3$ 天的\textbf{完整烘干过程}，
-涵盖预热平衡与恒温干燥两个阶段。相较问题一，其本质区别体现在四点：
+问题二将研究范围由 $30$ 分钟的预热阶段扩展到持续 $2\sim3$ 天的\textbf{完整烘干过程}。相较
+问题一，本问的本质变化可归结为四点。
 
-其一，\textbf{物性参数随状态变化}。附录3给出密度 $\rho=650+128C$、比热容
-$c_p=1450+2736\,C/(C+1)$、热传导系数 $k=0.21+0.38\,C/(C+1)$ 均随水分浓度 $C$ 变化，
-扩散系数 $D=2.4\times10^{-3}e^{-0.45/C}e^{-3850/T}$ 同时依赖 $C$ 与温度 $T$（含 Arrhenius 型
-温度项）。这使得 $\rho,c_p$ 不再能提到时间导数外，传热方程与传质方程\textbf{双向耦合}，
-需联立求解，不能再如问题一那样解耦。
+其一，\textbf{控制方程不再解耦}：附录3 中 $\rho,c_p,k$ 均随含水率 $C$ 变化，$D$ 还含 Arrhenius
+温度项，$\rho c_p$ 不能提到时间导数之外，传热与传质\textbf{双向耦合}。
 
-其二，\textbf{几何不能再降维}。问题一将药材退化为无限长圆柱，依据是 $30\ \mathrm{min}$ 的
-预热时间尺度远小于轴向扩散的特征时间；而恒温干燥阶段持续数天，轴向端面的对流交换会经轴向
-扩散逐步向内部渗透，端部效应不再可以忽略。同时物性随 $C,T$ 变化，方程也不再具有严格的轴对称
-简化依据。因此问题二需在柱坐标下建立\textbf{完整三维模型}，径向、周向、轴向的控制体与通量
-均实际保留，以严格反映各控制体真实的通量与边界面积。
+其二，\textbf{几何不能再降维}：问题一降维的依据是 $30\ \mathrm{min}$ 的预热尺度远小于轴向扩散
+的特征时间；恒温干燥持续数天，端面交换经轴向扩散向内渗透，端部效应不再可忽略，且物性随
+$C,T$ 变化后也失去了严格的轴对称依据。
 
-其三，\textbf{两阶段的衔接时刻需识别}。预热平衡与恒温干燥的物性公式并不相同，但两者的分界
-时刻 $t_c$ 题目中并未直接给出，需依据附件1的实测温度数据判定。若采用单一温度阈值，容易被
-测温噪声提前触发，也无法保证此后烘房确实保持恒温，故需构造同时考察“接近平台”与“升温速率
-足够小”、并附加持续性要求的判据。
+其三，\textbf{阶段分界时刻需识别}：两阶段物性公式不同，而 $t_c$ 题目并未给出，须依据附件1
+的实测温度判定；单一温度阈值易被测温噪声提前触发，需要更稳健的判据。
 
-其四，\textbf{环境条件需外推，时间尺度跨度大}。附件1仅覆盖前 $4\ \mathrm{h}$
-（$14400\ \mathrm{s}$），其平台均值 $\overline{T}_a\approx50\ ^\circ\mathrm{C}$、
-$\overline{C}_a\approx0.05\ \mathrm{kg/kg}$ 可作为此后恒温干燥阶段的稳态环境输入。预热阶段
-约 $1.9\ \mathrm{h}$（$6780\ \mathrm{s}$），而整个干燥过程长达 $2\sim3$ 天，物性参数通过
-$C$、$T$ 缓慢演化，需兼顾数值稳定性与长期仿真的计算效率。
+其四，\textbf{环境需外推、时间跨度大}：附件1 仅覆盖前 $4\ \mathrm{h}$，其后须以恒温段平台均值
+外推；全过程长达数天，需兼顾数值稳定性与计算效率。
 
-\textbf{求解思路}：由于不能降维且两方程双向耦合，问题二在\textbf{三维柱坐标有限体积框架}下
-求解——每个控制体按 $r\Delta r\Delta\varphi\Delta z$ 精确计算体积，面通量用\textbf{调和平均}
-折算导率，边界控制体保留半网格内部阻力与外部对流阻力的串联。两阶段物性按识别出的 $t_c$
-分段取用，$t_c$ 处只切换物性、状态量继承前一步的结果以保证连续；时间方向采用\textbf{隐式
-（后向欧拉）推进}，每步用 \textbf{Picard 迭代}更新温度、含水率及物性直至收敛。按表3、表4
-输出前 $3\ \mathrm{h}$ 内每隔 $0.5\ \mathrm{h}$、距中心 $0,0.5,1,1.5,2\ \mathrm{cm}$ 处的结果，
-完整结果保存至 result2.xlsx。
+\textbf{求解思路}：在\textbf{三维柱坐标有限体积}框架下联立求解两方程，两阶段物性按识别出的
+$t_c$ 分段取用并保持切换连续。
 
 \subsection{问题三的分析}
-问题三在问题二完整模型的基础上引入\textbf{干燥达标判据}：药材各处水分浓度均不高于
-$C_{\mathrm{crit}}=0.15\ \mathrm{kg/kg}$。由于圆柱药材的水分浓度沿径向由外向内递增，
-中心 $r=0$ 处水分浓度最高、下降最慢，故“各处均 $\le0.15$”等价于“中心含水率
-$C(0,t)\le0.15$”。由此，多维达标判断归结为对中心点时间序列的监控，问题转化为一个
-\textbf{临界时间的确定}问题。
+问题三在问题二模型的基础上引入\textbf{干燥达标判据}：药材各处水分浓度均低于
+$C_{\mathrm{crit}}=0.15\ \mathrm{kg/kg}$。由于水分浓度沿径向由外向内递增，中心 $r=0$ 处最高、
+下降最慢，故“各处均达标”等价于“中心含水率 $C(0,t)<0.15$”，多维达标判断归结为对中心点
+时间序列的监控，问题转化为\textbf{临界时间的确定}。
 
-\textbf{求解思路}：在问题二模型上作长时间推进，定时检测 $\max C$；当首次满足达标条件时
-终止，该时刻即为烘干总时长。为精确定位达标时刻，可先以较粗步长推进至接近达标，再通过
-\textbf{二分或插值}细化。按表5格式每隔 $6\ \mathrm{h}$、径向每隔 $0.5\ \mathrm{cm}$ 输出
-水分浓度，完整结果每隔 $60\ \mathrm{s}$ 保存至 result3.xlsx。
+\textbf{求解思路}：在问题二模型上作长时间推进，定时检测 $\max C$，首次达标即为烘干总时长；
+为精确定位达标时刻，可先以较粗步长推进至接近达标，再通过\textbf{插值}细化。
 
 \subsection{问题四的分析}
-问题四考虑实际烘干中因水分流失导致的\textbf{尺寸收缩}，是前三个问题的进一步扩展。附件2
-给出药材半径随时间的变化数据（$0\sim72\ \mathrm{h}$ 内 $R$ 由 $2.0\ \mathrm{cm}$ 收缩至约
-$1.2\ \mathrm{cm}$），即求解域外边界 $R(t)$ 随时刻\textbf{移动}，构成移动边界（动边界）
-问题；同时物性参数改用附录4的经验公式（其系数与附录3不同）。
+问题四考虑实际烘干中因水分流失导致的\textbf{尺寸收缩}。附件2 给出 $0\sim72\ \mathrm{h}$ 内药材
+半径由 $2.0\ \mathrm{cm}$ 收缩至约 $1.2\ \mathrm{cm}$，即求解域外边界 $R(t)$ 随时刻\textbf{移动}，
+构成移动边界问题；物性参数改用附录4 的经验公式（系数与附录3 不同）。
 
-难点在于：半径收缩使空间离散域逐时刻变化，固定网格难以直接套用；移动边界上水分通量的处理
-需与收缩速率协调；表6要求输出到“药材表面”的水分浓度，而该位置本身随时刻移动。
+难点在于：半径收缩使空间离散域逐时刻变化，固定网格难以直接套用；表6 要求输出到“药材表面”的
+水分浓度，而该位置本身随时刻移动。
 
-\textbf{求解思路}：采用\textbf{坐标变换（Landau 变换 $\xi=r/R(t)$）}将移动区间 $[0,R(t)]$
-映射到固定区间 $[0,1]$，把动边界问题转化为含由 $R'(t)$ 引起的对流项的固定域方程，再沿用
-问题三的数值框架求解；由附件2数据插值或拟合得到 $R(t)$。据此重新确定烘干时长，并按表6
-输出水分浓度，完整结果保存至 result4.xlsx。
+\textbf{求解思路}：采用\textbf{坐标变换} $\xi=r/R(t)$ 将移动区间 $[0,R(t)]$ 映射到固定区间
+$[0,1]$，径向扩散项因此出现 $1/R^2(t)$ 几何因子；含水率取干基定义并视为随固体骨架运动，
+故不引入体积浓度稀释项。半径 $R(t)$ 由附件2 数据经保形插值得到（不作外推），物性自初始
+时刻起统一采用附录4，时间以自适应 BDF 推进，监测全域最大含水率首次低于
+$0.15\ \mathrm{kg/kg}$ 即得烘干时长。
+
+基于上述分析，问题一至问题三的完整求解路线如图~\ref{fig:roadmap} 所示：三者共用同一套
+数据预处理与阶段分界识别，随后按各自的几何维度与物理假设建立模型、选取数值格式，最终输出
+对应结果表并统一经过数值验证。
+
+\begin{figure}[H]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\footnotesize,
+  node distance=3mm,
+  box/.style={rectangle, draw, rounded corners=1.5pt, align=center,
+              inner sep=3pt, text width=41mm},
+  io/.style={box, text width=54mm, fill=black!8},
+  pre/.style={box, text width=64mm, fill=black!4},
+  q1/.style={box, fill=blue!8},
+  q2/.style={box, fill=green!10},
+  q3/.style={box, fill=orange!12},
+  ar/.style={-{Latex[length=2.2mm]}, thick, draw=black!70},
+  fan/.style={ar, draw=black!45}
+]
+
+% ---- 顶部：输入与共用预处理 ----
+\node[pre] (in) {附件1：烘房温度 $T_a(t)$、空气含湿量 $C_a(t)$（241 点，$\Delta t=60$ s）};
+\node[pre, below=5mm of in] (sg)
+  {Savitzky--Golay 保形滤波（窗宽 31 点、三阶）$\;\Rightarrow\;$ 对流边界输入};
+\node[pre, below=of sg] (tc)
+  {\textbf{阶段分界识别}：尾段中位数 $T^{*}$ 与 MAD 稳健标准差 $\sigma$ 给出稳态温度带，
+   要求 $20$ min 滑动均温接近平台、升温斜率足够小，且连续保持 $30$ min
+   $\;\Rightarrow\; t_c=6780\ \mathrm{s}=1.8833\ \mathrm{h}$};
+
+% ---- 三列：问题一 / 二 / 三 ----
+\node[q1, below=12mm of tc, xshift=-5.4cm] (a1)
+  {\textbf{问题一}\\[1pt] 预热平衡阶段 $0\sim1800$ s};
+\node[q1, below=of a1] (a2)
+  {降维：$L\gg R$ $\Rightarrow$ 无限长圆柱 $\Rightarrow$ 一维径向\\
+   Fourier 导热 + Fick 扩散\\
+   $D(C)=7\!\times\!10^{-9}e^{-0.89/C}$};
+\node[q1, below=of a2] (a3)
+  {$r=0$ 对称、$r=R$ Robin 对流；\\
+   $\rho,c_p,k$ 为常数、$D$ 仅依赖 $C$\\
+   $\Rightarrow$ 传热与传质\textbf{解耦}};
+\node[q1, below=of a3] (a4)
+  {有限体积（守恒）+ Crank--Nicolson\\
+   + Picard 迭代；$N=1600$，$\Delta t=0.25$ s};
+
+\node[q2, below=12mm of tc] (b1)
+  {\textbf{问题二}\\[1pt] 完整烘干过程 $0\sim3$ h};
+\node[q2, below=of b1] (b2)
+  {物性分段：$t<t_c$ 用附录2，$t\ge t_c$ 用附录3\\
+   $\rho,c_p,k$ 随 $C$ 变化、$D$ 含 Arrhenius 项\\
+   $\Rightarrow$ $\rho c_p$ 不可外提，\textbf{双向耦合}};
+\node[q2, below=of b2] (b3)
+  {不降维，三维柱坐标 $(r,\varphi,z)$\\
+   三维有限体积 $20\!\times\!6\!\times\!32$\\
+   面导率调和平均；边界=半网格内阻+外对流阻};
+\node[q2, below=of b3] (b4)
+  {后向欧拉 $\Delta t=5$ s + Picard 迭代\\
+   + 共轭梯度法；跨 $t_c$ 的时间步先截断，
+   只换物性、不重置初值};
+
+\node[q3, below=12mm of tc, xshift=5.4cm] (c1)
+  {\textbf{问题三}\\[1pt] 确定达标烘干时长};
+\node[q3, below=of c1] (c2)
+  {判据：各处 $C<0.15$ kg/kg\\
+   含水率沿径向外低内高，故等价于\\
+   中心 $C(0,t)<0.15$};
+\node[q3, below=of c2] (c3)
+  {二维轴对称 $(r,z)$ + 守恒有限体积\\
+   二阶段 Gauss--Legendre 隐式 RK4\\
+   阻尼不动点迭代 $\omega=0.8$，$\Delta t=2.5$ s};
+\node[q3, below=of c3] (c4)
+  {长时间推进至全域 $\max C<0.15$\\
+   对相邻时刻线性插值细化\\
+   $\Rightarrow t_{\mathrm{dry}}=56.9702$ h};
+
+% ---- 底部：输出与验证 ----
+\node[io] (o2) at ([yshift=-11mm]b4.south)
+  {\textbf{问题二输出}\\ 表3、表4\\ result2.xlsx（$1$ s $\times$ $0.1$ cm）};
+\node[io] (o1) at ([xshift=-5.8cm]o2)
+  {\textbf{问题一输出}\\ 表1、表2\\ result1.xlsx（$1$ s $\times$ $0.1$ cm）};
+\node[io] (o3) at ([xshift=5.8cm]o2)
+  {\textbf{问题三输出}\\ 表5\\ result3.xlsx（$60$ s $\times$ $0.1$ cm）};
+\node[io] (ver) at ([yshift=-14mm]o2.south)
+  {\textbf{数值验证}\\ 网格加密、时间步加密、水分守恒、判据敏感性};
+
+% ---- 连线 ----
+\draw[ar] (in) -- (sg);
+\draw[ar] (sg) -- (tc);
+\draw[fan] (tc.south) -- ++(0,-4mm) -| (a1.north);
+\draw[fan] (tc.south) -- ++(0,-4mm) -| (b1.north);
+\draw[fan] (tc.south) -- ++(0,-4mm) -| (c1.north);
+\draw[ar] (a1) -- (a2);  \draw[ar] (a2) -- (a3);  \draw[ar] (a3) -- (a4);
+\draw[ar] (b1) -- (b2);  \draw[ar] (b2) -- (b3);  \draw[ar] (b3) -- (b4);
+\draw[ar] (c1) -- (c2);  \draw[ar] (c2) -- (c3);  \draw[ar] (c3) -- (c4);
+\draw[fan] (a4.south) -- ++(0,-4mm) -| (o1.north);
+\draw[fan] (b4.south) -- ++(0,-4mm) -| (o2.north);
+\draw[fan] (c4.south) -- ++(0,-4mm) -| (o3.north);
+\draw[ar] (o1.south) |- (ver.west);
+\draw[ar] (o2) -- (ver);
+\draw[ar] (o3.south) |- (ver.east);
+
+\end{tikzpicture}}
+\caption{问题一至问题三求解流程图}
+\label{fig:roadmap}
+\end{figure}
 
 % =====================================================================
 % 三、模型假设
 % =====================================================================
 \section{模型假设}
-% 列出建模所需的合理假设，用编号列表。
+结合药材物性与热风烘干的工艺特点，本文建模作如下假设：
+
 \begin{enumerate}
-    \item 假设一……
-    \item 假设二……
-    \item 假设三……
+    \item \textbf{连续介质与各向同性假设}：药材视为均匀、连续、各向同性的多孔介质，内部不
+    存在生成或消耗热量与水分的内源项；同一时刻的物性仅随含水率（及温度）变化，不随空间位置
+    变化。因此控制方程中不含源项，物性可作为状态量的函数统一写入。
+
+    \item \textbf{导热与扩散定律假设}：药材内部的热传递服从 Fourier 定律，水分迁移服从 Fick
+    第二定律，水分以浓度梯度驱动的扩散为主，忽略毛细力、压力梯度与重力引起的迁移，也不考虑
+    水分以气态形式在孔隙内的独立流动。
+
+    \item \textbf{对流边界假设}：药材表面与烘房空气之间以对流方式换热与传质，对流换热系数
+    $h$ 与对流传质系数 $h_m$ 取附录给定的常数，不随温度、含湿量、风速及表面含水率变化。
+
+    \item \textbf{环境均匀且单向作用假设}：烘房内温度与空气含湿量处处均匀，其随时间的变化
+    规律由附件1 完全给定，且不因药材的吸放热与失水而改变。即环境构成一组给定的时变边界条件，
+    药材的存在不影响烘房环境。
+
+    \item \textbf{降维假设}：预热平衡阶段（问题一）持续时间短，轴向端部效应与周向不均匀性
+    可忽略，药材退化为无限长圆柱，仅保留径向变化；恒温干燥持续数天，端面交换经轴向扩散向内
+    渗透而不可忽略，故问题二保留完整三维模型，问题三利用几何与受载的轴对称性采用二维轴对称
+    模型。
+
+    \item \textbf{尺寸不变假设}：问题一至问题三中，药材在干燥过程中尺寸保持不变，即
+    $R=2\ \mathrm{cm}$、$L=25\ \mathrm{cm}$ 为常数；因水分流失引起的尺寸收缩仅在问题四中予以
+    考虑，并直接采用附件2 给出的半径随时间变化数据。
+
+    \item \textbf{初始均匀假设}：烘干开始时，药材内部的温度与水分浓度处处均匀，分别为
+    $T_0=28\ ^\circ\mathrm{C}$ 与 $C_0=2.55\ \mathrm{kg/kg}$。
+
+    \item \textbf{分段物性假设}：预热平衡阶段的物性取附录2 给出的常数，恒温干燥阶段的物性取
+    附录3 给出的随含水率变化的关系式；两阶段以识别出的临界时刻 $t_c$ 为界切换，切换处只更换
+    物性参数而不重置状态量，保证温度场与水分浓度场连续。
+
+    \item \textbf{径向收缩与干基含水率假设（问题四）}：水分流失引起的几何变化取\textbf{均匀径向
+    收缩、轴向长度不变}，即半径 $R(t)$ 直接采用附件2 给出的数据，轴向长度保持
+    $L=25\ \mathrm{cm}$；含水率以\textbf{干基}定义（每单位干物质所含水的质量），视其为随固体
+    骨架一起运动的量，故移动边界下的水分控制方程\textbf{不引入体积浓度稀释项}。问题四的物性
+    自初始时刻起统一采用附录4 给出的关系式（其中扩散系数同时依赖温度与含水率），不再移植
+    问题二用过的附录2$\to$附录3 阶段过渡；该过渡仅作敏感性对照。
 \end{enumerate}
 
 % =====================================================================
@@ -316,9 +465,9 @@ $t_{\mathrm{dry}}$ & 烘干总时长（问题三、四） & $\mathrm{h}$ \\
 \end{table}
 
 % =====================================================================
-% 五、模型的建立与求解（每个问题一节，按需增减）
+% 五、模型的建立与求解
 % =====================================================================
-\section{问题一模型的建立与求解}
+\section{模型的建立与求解}
 \subsection{问题一模型的建立}
 
 \textbf{1. 数据预处理与边界条件}
@@ -535,8 +684,6 @@ $1\ \mathrm{cm}$ 的范围内才出现明显失水在量级上一致，更深处
 % =====================================================================
 % 问题二模型的建立与求解
 % =====================================================================
-\section{问题二模型的建立与求解}
-
 \subsection{问题二模型的建立}
 
 \textbf{1. 分段物性参数与阶段切换}
@@ -898,19 +1045,300 @@ $t_c$ 前后的分段物性切换也会使表层薄层的平衡值发生小幅�
 以及 $20/30$ 分钟的时间参数仍是建模选择，正式应用时应结合设备的控温精度与工艺容差做灵敏度
 检验。
 
+
+
+
+% 问题三
+% =====================================================================
+\subsection{问题三模型的建立}
+
+\textbf{1. 二维轴对称模型}
+
+问题三要求在完整烘干过程基础上确定药材内部所有位置均达到
+$C_{\mathrm{crit}}=0.15\ \mathrm{kg/kg}$ 的最早时刻。圆柱药材关于轴线对称，且主要传热传质
+过程由侧面和两个端面控制，因此采用二维轴对称模型，计算域为
+
+\begin{equation}
+\Omega=\left\{(r,z):0\le r\le R,\ 0\le z\le L\right\},
+\label{eq:p3domain}
+\end{equation}
+
+其中
+
+\begin{equation}
+R=0.02\ \mathrm{m},\qquad L=0.25\ \mathrm{m}.
+\label{eq:p3geometry}
+\end{equation}
+
+温度场 $T(r,z,t)$ 满足变物性热传导方程
+
+\begin{equation}
+\rho(C)c_p(C)\frac{\partial T}{\partial t}
+=
+\frac{1}{r}\frac{\partial}{\partial r}
+\left(rk(C)\frac{\partial T}{\partial r}\right)
++
+\frac{\partial}{\partial z}
+\left(k(C)\frac{\partial T}{\partial z}\right),
+\label{eq:p3heat}
+\end{equation}
+
+干基水分浓度 $C(r,z,t)$ 满足
+
+\begin{equation}
+\frac{\partial C}{\partial t}
+=
+\frac{1}{r}\frac{\partial}{\partial r}
+\left(rD(C,T)\frac{\partial C}{\partial r}\right)
++
+\frac{\partial}{\partial z}
+\left(D(C,T)\frac{\partial C}{\partial z}\right).
+\label{eq:p3mass}
+\end{equation}
+
+依据附录3，物性参数取
+
+\begin{equation}
+\rho(C)=650+128C,
+\label{eq:p3rho}
+\end{equation}
+
+\begin{equation}
+c_p(C)=1450+2736\frac{C}{C+1},
+\label{eq:p3cp}
+\end{equation}
+
+\begin{equation}
+k(C)=0.21+0.38\frac{C}{C+1},
+\label{eq:p3k}
+\end{equation}
+
+\begin{equation}
+D(C,T)=2.4\times10^{-3}
+\exp\left(-\frac{0.45}{C}\right)
+\exp\left(-\frac{3850}{T}\right),
+\label{eq:p3D}
+\end{equation}
+
+其中 $T$ 使用开尔文温度。
+
+\textbf{2. 初始条件与边界条件}
+
+初始温度和水分浓度均匀：
+
+\begin{equation}
+T(r,z,0)=28\ ^\circ\mathrm{C},\qquad
+C(r,z,0)=2.55\ \mathrm{kg/kg}.
+\label{eq:p3ic}
+\end{equation}
+
+中心轴采用轴对称条件：
+
+\begin{equation}
+\frac{\partial T}{\partial r}(0,z,t)=0,\qquad
+\frac{\partial C}{\partial r}(0,z,t)=0.
+\label{eq:p3axis}
+\end{equation}
+
+侧面 $r=R$ 和两个端面 $z=0,\ L$ 均采用对流换热与对流传质边界：
+
+\begin{equation}
+-k(C)\frac{\partial T}{\partial n}
+=
+h\left[T-T_\infty(t)\right],
+\label{eq:p3heatbc}
+\end{equation}
+
+\begin{equation}
+-D(C,T)\frac{\partial C}{\partial n}
+=
+h_m\left[C-C_\infty(t)\right].
+\label{eq:p3massbc}
+\end{equation}
+
+其中 $T_\infty(t)$、$C_\infty(t)$ 由附件1按时间插值得到，$h=25\ \mathrm{W/(m^2\cdot K)}$，
+$h_m=8\times10^{-7}\ \mathrm{m/s}$。
+
+\textbf{3. 预热与恒温阶段分界}
+
+问题三沿用问题二中的阶段识别方法：以附件1尾部数据的中位数作为平台温度，以 MAD
+换算稳健标准差，并通过 $20\ \mathrm{min}$ 滑动均值和最小二乘升温斜率的双条件及后续
+$30\ \mathrm{min}$ 持续性要求确定临界时刻。由原始附件数据得到
+$t_c=6780\ \mathrm{s}=1.8833\ \mathrm{h}$，与问题二识别结果完全一致，故本问全程沿用
+同一分界，不再另行判定。
+
+\subsection{问题三的求解与结果分析}
+
+\textbf{1. 有限体积离散（守恒格式）}
+
+相邻控制体在同一内部面上使用大小相等、方向相反的通量。将全部控制体求和后，内部面通量
+严格抵消，只保留侧面和两个端面的边界传质通量：
+
+\begin{equation}
+F_{\mathrm{surface}}
+=
+h_m\left(C_\infty-C_{\mathrm{surface}}\right)dA.
+\label{eq:p3boundaryflux}
+\end{equation}
+
+该格式从离散层面保证全局水分守恒。
+
+\textbf{2. 隐式 RK4 时间推进}
+
+温度与水分浓度组成统一状态向量，采用二阶段 Gauss--Legendre 隐式 RK4。Butcher 系数为
+
+\begin{equation}
+c_1=\frac12-\frac{\sqrt3}{6},\qquad
+c_2=\frac12+\frac{\sqrt3}{6},
+\label{eq:p3rk4c}
+\end{equation}
+
+\begin{equation}
+A=
+\begin{pmatrix}
+\frac14 & \frac14-\frac{\sqrt3}{6}\\
+\frac14+\frac{\sqrt3}{6} & \frac14
+\end{pmatrix},
+\qquad
+b=
+\begin{pmatrix}
+\frac12 & \frac12
+\end{pmatrix}.
+\label{eq:p3rk4ab}
+\end{equation}
+
+隐式阶段方程为
+
+\begin{equation}
+Y_i
+=
+U_n
++
+\Delta t\sum_{j=1}^{2}a_{ij}
+F\left(t_n+c_j\Delta t,Y_j\right).
+\label{eq:p3stages}
+\end{equation}
+
+采用阻尼固定点迭代求解：
+
+\begin{equation}
+Y_i^{(k+1)}
+=
+(1-\omega)Y_i^{(k)}
++
+\omega\left[
+U_n+\Delta t\sum_{j=1}^{2}a_{ij}
+F\left(t_n+c_j\Delta t,Y_j^{(k)}\right)
+\right].
+\label{eq:p3fixedpoint}
+\end{equation}
+
+取 $\omega=0.8$，收敛判据为
+
+\begin{equation}
+\max_i\left\|Y_i^{(k+1)}-Y_i^{(k)}\right\|_\infty
+<
+1.0\times10^{-7}.
+\label{eq:p3tolerance}
+\end{equation}
+
+时间步长取 $\Delta t=2.5\ \mathrm{s}$。当检测到全空间最大水分浓度首次降到
+$0.15\ \mathrm{kg/kg}$ 以下时，对相邻两个时刻进行线性插值，得到精确的烘干结束时间。
+
+\textbf{3. 结果}
+
+计算得到药材内部所有位置均满足 $C<0.15\ \mathrm{kg/kg}$ 的时间为
+
+\begin{equation}
+t_{\mathrm{dry}}=56.9702\ \mathrm{h}.
+\label{eq:p3drytime}
+\end{equation}
+
+此时全空间最大水分浓度为
+
+\begin{equation}
+C_{\max}=0.144606\ \mathrm{kg/kg}.
+\label{eq:p3finalmax}
+\end{equation}
+
+表~\ref{tab:C3} 给出每隔 $6\ \mathrm{h}$、径向每隔 $0.5\ \mathrm{cm}$ 的水分浓度。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l*{5}{>{\centering\arraybackslash}X}}
+\toprule
+\multirow{2}{*}{时间/h} & \multicolumn{5}{c}{到药材中心的距离/cm} \\
+\cmidrule(lr){2-6}
+ & 0 & 0.5 & 1.0 & 1.5 & 2.0 \\
+\midrule
+6.0000  & 1.0041 & 0.9757 & 0.8905 & 0.7462 & 0.5251 \\
+12.0000 & 0.4396 & 0.4272 & 0.3890 & 0.3189 & 0.1578 \\
+18.0000 & 0.2869 & 0.2800 & 0.2583 & 0.2168 & 0.0826 \\
+24.0000 & 0.2281 & 0.2233 & 0.2080 & 0.1779 & 0.0653 \\
+30.0000 & 0.1973 & 0.1936 & 0.1815 & 0.1572 & 0.0589 \\
+36.0000 & 0.1783 & 0.1751 & 0.1648 & 0.1440 & 0.0559 \\
+42.0000 & 0.1651 & 0.1623 & 0.1533 & 0.1348 & 0.0543 \\
+48.0000 & 0.1553 & 0.1528 & 0.1447 & 0.1279 & 0.0532 \\
+54.0000 & 0.1478 & 0.1455 & 0.1380 & 0.1225 & 0.0526 \\
+56.9702 & 0.1446 & 0.1424 & 0.1352 & 0.1202 & 0.0523 \\
+\bottomrule
+\end{tabularx}
+\caption{药材烘干过程中的轴向平均水分浓度（单位：kg/kg）}
+\label{tab:C3}
+\end{table}
+
+由表~\ref{tab:C3} 可见，水分浓度始终满足中心高、表面低的空间分布，说明干燥过程由外向内
+推进。$6\ \mathrm{h}$ 时中心水分浓度仍约为 $1.0041\ \mathrm{kg/kg}$，而 $54\ \mathrm{h}$
+时已降至 $0.1478\ \mathrm{kg/kg}$。由于表格中的数值为轴向平均结果，局部中心截面的水分浓度
+略高于该平均值，因此最后一行的实际停止时间晚于 $54\ \mathrm{h}$。表中所有径向位置在
+$56.9702\ \mathrm{h}$ 均已低于 $0.15\ \mathrm{kg/kg}$。
 % =====================================================================
 % 六、模型评价
 % =====================================================================
 \section{模型优缺点分析}
 \subsection{优点}
 \begin{itemize}
-    \item 优点一……
-    \item 优点二……
+    \item \textbf{模型复杂度与问题尺度相匹配}：问题一依据 $L/R=12.5$ 作一维降维、问题二因
+    长时程端部效应保留完整三维、问题三利用轴对称性回到二维，既避免了“一律三维”造成的计算
+    浪费（问题二全量 $3\ \mathrm{h}$ 仿真仅约 $9\ \mathrm{s}$），也避免了过度简化导致失真。
+
+    \item \textbf{离散格式守恒、边界处理精细}：采用守恒型有限体积法，控制体体积与面通量均按
+    真实几何量计算；内部面导率用调和平均折算，边界面用“半网格内部阻力与外对流阻力串联”的
+    等效导率，而非以控制体中心值近似表面值，从而避免了后者带来的一阶误差。
+
+    \item \textbf{阶段分界判据客观、抗噪且可复现}：以尾段中位数与 MAD 稳健标准差给出稳态温度
+    带，再结合滑动均温与升温斜率双条件及持续性要求判定 $t_c$，比单一进度阈值更能抵抗测温噪声；
+    敏感性检验表明三个互不相关的松紧变体给出完全相同的 $t_c$。
+
+    \item \textbf{数值方案稳定且精度可控}：时间方向采用隐式格式（Crank--Nicolson、后向欧拉、
+    隐式 RK4），对刚性扩散问题无条件稳定，适合 $2\sim3$ 天的长时间推进；非线性系数以 Picard
+    迭代线性化，收敛判据同时约束温度与含水率的相对变化。
+
+    \item \textbf{结果的不确定度已量化}：通过空间网格加密、时间步缩小、$t_c$ 判据阈值扰动三组
+    算例给出偏差量级，并将全域偏差定位到边界反解层，使结论的可靠范围明确可辨。
 \end{itemize}
-\subsection{缺点}
+
+\subsection{缺点与改进方向}
 \begin{itemize}
-    \item 缺点一……
-    \item 改进方向……
+    \item \textbf{缺少实测内部数据用于标定与验证}：附件仅给出烘房环境条件，没有药材内部温度
+    与含水率的实测值，模型只能在机理与数值层面作自洽检验。改进方向：增设少量内部测点，用其
+    反演 $h_m$、$D$ 等难以准确给定的参数，并对模型做实测校验。
+
+    \item \textbf{物性参数做了常数化处理}：问题一至问题三中 $h$、$h_m$ 取常数，未考虑风速与
+    表面含水率的影响；预热阶段亦忽略了温度对扩散系数的 Arrhenius 效应。改进方向：改用
+    $h_m=f(u)$、$D=D(C,T)$ 的一般形式。
+
+    \item \textbf{热质耦合仍不完备}：模型未计入表面水分汽化带走的热量（相变潜热），也未考虑
+    干燥收缩引起的孔隙结构变化对扩散系数的影响，这在干燥后期含水率很低时可能带来偏差。改进
+    方向：在表面能量平衡中加入汽化潜热项，并把孔隙率变化引入有效扩散系数。
+
+    \item \textbf{结果的位数表述需谨慎}：收敛性检验表明表列数值自第 3 位小数起已不具收敛
+    意义，故正文的物理解释均建立在 $10^{-2}$ 量级的差异上，未对更低位小数作实质性推断。
+
+    \item \textbf{判据阈值仍属建模选择}：$2\sigma$ 温度带、$20\ \mathrm{min}$ 窗长与
+    $30\ \mathrm{min}$ 持续性要求缺少设备控温精度与工艺容差的支撑，实际应用前应结合具体烘房
+    条件作标定与灵敏度复核。
 \end{itemize}
 
 % =====================================================================
@@ -944,9 +1372,109 @@ CRANK J, NICOLSON P. A practical method for numerical evaluation of solutions of
 % =====================================================================
 % 附录
 % =====================================================================
+\clearpage
 \appendix
-\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}   % 附录子节编号为 A.1 而非 1.1
 \section{附录}
+% 附录内子节改用 A.1 / A.2 / A.3 编号（正文子节不受影响，因其已在本行之前排版完毕）
+\renewcommand{\thesubsection}{\thesection.\arabic{subsection}}
+
+% —— 收敛性与敏感性检验 ——
+\subsection{收敛性与敏感性检验}
+\label{app:conv}
+
+为检验数值结果的可靠性，本文在问题二模型上设计了三组算例：固定时间步长
+$\Delta t=5\ \mathrm{s}$ 加密空间网格、固定网格 $20\times6\times32$ 缩小时间步长，以及扰动
+阶段分界判据 $t_c$ 的阈值参数。前两组取各自最细配置为参考解，偏差同时给出两种口径：
+限定在论文表~\ref{tab:T2}、\ref{tab:C2} 实际列出的位置（$6$ 个时刻 $\times$ $5$ 个径向位置），
+以及全域（$3\ \mathrm{h}$ 内每一秒 $\times$ $21$ 个径向位置）。结果见表~\ref{tab:app_conv}。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{llcccccc}
+\toprule
+收敛方式 & 配置 & 控制体数 & $\Delta t/\mathrm{s}$ &
+\multicolumn{2}{c}{$3\ \mathrm{h}$ 中心值} & \multicolumn{2}{c}{表列位置最大偏差} \\
+\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+ & & & & $T/^\circ\mathrm{C}$ & $C$ & $\max|\Delta T|$ & $\max|\Delta C|$ \\
+\midrule
+\multirow{3}{*}{空间加密}
+ & $20\times6\times32$ & 3840 & 5 & 49.8867 & 1.9237 & $1.6\times10^{-3}$ & $3.6\times10^{-3}$ \\
+ & $32\times8\times48$ & 12288 & 5 & 49.8868 & 1.9235 & $4.1\times10^{-4}$ & $1.2\times10^{-3}$ \\
+ & $48\times12\times72^{\dagger}$ & 41472 & 5 & 49.8868 & 1.9238 & — & — \\
+\midrule
+\multirow{3}{*}{时间加密}
+ & $\Delta t=5\ \mathrm{s}$  & 3840 & 5 & 49.8867 & 1.9237 & $4.5\times10^{-3}$ & $3.5\times10^{-4}$ \\
+ & $\Delta t=2.5\ \mathrm{s}$ & 3840 & 2.5 & 49.8868 & 1.9237 & $1.5\times10^{-3}$ & $1.2\times10^{-4}$ \\
+ & $\Delta t=1.25\ \mathrm{s}^{\dagger}$ & 3840 & 1.25 & 49.8868 & 1.9236 & — & — \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+{\footnotesize $C$ 的单位为 $\mathrm{kg/kg}$，偏差单位与所在列自变量一致；
+$\dagger$ 为该组的参考解。}
+\caption{离散参数收敛性检验（问题二：$0\sim3\ \mathrm{h}$）}
+\label{tab:app_conv}
+\end{table}
+
+由表~\ref{tab:app_conv} 可见：温度对\textbf{时间步长}更敏感——$\Delta t$ 由 $5\ \mathrm{s}$ 减至
+$1.25\ \mathrm{s}$ 使表列偏差由 $4.5\times10^{-3}$ 降至 $1.5\times10^{-3}\ {}^\circ\mathrm{C}$，
+而网格加密只使温度偏差由 $1.6\times10^{-3}$ 降至 $4.1\times10^{-4}\ {}^\circ\mathrm{C}$；
+含水率则对\textbf{空间网格}更敏感——网格加密使表列偏差由 $3.6\times10^{-3}$ 降至
+$1.2\times10^{-3}$ kg/kg，而时间步加密仅由 $3.5\times10^{-4}$ 降至 $1.2\times10^{-4}$ kg/kg。
+这与物理图像一致：温度场瞬态响应快，精度主要受时间离散制约；含水率在近表面处梯度陡，
+精度主要受空间离散制约。
+
+全域偏差大于表列偏差，其原因已定位到\textbf{边界反解层}：$r=2\ \mathrm{cm}$ 处的数值并非
+控制体中心值，而是由对流边界条件~\eqref{eq:p2bc} 用半网格阻力\textbf{一阶}反解得到，
+其精度依赖 $\Delta r$；且首个时间步（$t<60\ \mathrm{s}$）表层与环境尚未建立平衡、梯度最陡，
+反解误差最大（$t=5\ \mathrm{s}$ 处不同网格相差达 $9.5\times10^{-2}$ kg/kg）。剔除
+$t<60\ \mathrm{s}$ 与 $r=2\ \mathrm{cm}$ 后，全域含水率偏差降至 $4.9\times10^{-4}$ kg/kg 以内，
+说明该偏差是边界重构的局部效应，不向内部传播；论文表~\ref{tab:C2} 所取的
+$t\ge0.5\ \mathrm{h}$ 各时刻不受其影响。
+
+阶段分界判据 $t_c$ 的阈值敏感性见表~\ref{tab:app_tc}。
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{lccccc}
+\toprule
+$t_c$ 判据变体 & $t_c/\mathrm{s}$ & $\Delta t_c/\mathrm{s}$ &
+\multicolumn{2}{c}{$3\ \mathrm{h}$ 中心值} & \multicolumn{1}{c}{表列位置} \\
+\cmidrule(lr){4-5}\cmidrule(lr){6-6}
+ & & & $T/^\circ\mathrm{C}$ & $C$ & $\max|\Delta C|$ \\
+\midrule
+基准 $2\sigma$ / 窗 $20\ \mathrm{min}$ / 持续 $30\ \mathrm{min}$ & 6780 & $0$ & 49.8867 & 1.9237 & — \\
+偏松 $1.5\sigma$ & 7080 & $+300$ & 49.8898 & 1.9417 & $8.9\times10^{-2}$ \\
+偏严 $3\sigma$ & 6360 & $-420$ & 49.8831 & 1.9009 & $4.9\times10^{-2}$ \\
+斜率上限 $\times0.5$ & 7020 & $+240$ & 49.8891 & 1.9380 & $6.2\times10^{-2}$ \\
+窗长 $15\ \mathrm{min}$ & 6540 & $-240$ & 49.8846 & 1.9104 & $3.3\times10^{-2}$ \\
+窗长 $30\ \mathrm{min}$ & 7080 & $+300$ & 49.8898 & 1.9417 & $8.9\times10^{-2}$ \\
+斜率上限 $\times2$、持续 $15/60\ \mathrm{min}$ & 6780 & $0$ & 49.8867 & 1.9237 & $0$ \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+{\footnotesize 偏差相对基准解，$C$ 的单位为 $\mathrm{kg/kg}$；末行列出三个互不相关的
+松紧变体，其识别结果与基准完全一致。}
+\caption{$t_c$ 判据阈值的敏感性（网格 $20\times6\times32$，$\Delta t=5\ \mathrm{s}$）}
+\label{tab:app_tc}
+\end{table}
+
+由表~\ref{tab:app_tc} 可见，判据阈值的合理扰动使 $t_c$ 在 $6360\sim7080\ \mathrm{s}$ 之间变动
+（相对基准 $-6.2\%\sim+4.4\%$），而 $3\ \mathrm{h}$ 中心含水率仅在
+$1.9009\sim1.9417$ kg/kg 之间变化（相对极差约 $2\%$），中心温度变化不超过
+$0.007\ {}^\circ\mathrm{C}$。其中\textbf{持续性要求最不敏感}：由 $30\ \mathrm{min}$ 收紧到
+$15\ \mathrm{min}$ 或放宽到 $60\ \mathrm{min}$，识别出的 $t_c$ 完全不变，说明平台段确实已经
+稳定；而 $2\sigma$ 温度带与 $20\ \mathrm{min}$ 窗长的松紧会系统性地提前或推迟 $t_c$，
+两者对结果的影响方向相反、量级相当。
+
+综合来看，模型对离散参数与判据阈值均不敏感：表列数值在离散加密下变化不超过
+$5\times10^{-3}$，在判据阈值扰动下不超过 $9\times10^{-2}$ kg/kg。需要说明的是，
+论文表~\ref{tab:T2}、\ref{tab:C2} 按要求保留四位小数，但上述检验表明第 $3$ 位小数起已
+不具有收敛意义，可靠的是前两位；因此正文的一切物理解释均建立在 $10^{-2}$ 量级的差异上，
+未对第 $3$、$4$ 位小数作实质性推断。
 
 % —— 支撑材料目录 ——
 \subsection{支撑材料目录}
@@ -957,24 +1485,146 @@ CRANK J, NICOLSON P. A practical method for numerical evaluation of solutions of
 \textbf{文件名} & \textbf{功能说明} \\
 \midrule
 论文.pdf & 论文正文 \\
-solve\_problem1.py & 问题一模型求解代码 \\
-solve\_result2.py / plot\_results.py & 问题二模型求解与绘图代码 \\
-result1.xlsx & 问题一结果表 \\
-result2.xlsx & 问题二结果表 \\
+Problem I/solve\_problem1.py & 问题一求解：一维径向有限体积 + Crank--Nicolson + Picard 迭代 \\
+Problem I/plot\_fig1\_boundary\_air.py & 附件1 环境数据与 Savitzky--Golay 平滑曲线绘图 \\
+Problem I/plot\_curves.py & 问题一温度与水分浓度曲线绘图 \\
+Problem II/solve\_result2.py & 问题二求解：三维热质耦合模型与阶段分界 $t_c$ 识别 \\
+Problem II/plot\_results.py & 问题二临界时刻判定图与二维场分布图 \\
+Problem III/solve\_result3.py & 问题三求解：二维轴对称模型与烘干总时长 \\
+Problem III/q2\_2d\_model.py & 二、三维轴对称模型与物性模块 \\
+Problem III/q3\_grid\_convergence.py & 问题三网格收敛检验（另有时间步、守恒、回弹检验脚本） \\
+Problem IV/solve\_problem4.py & 问题四求解：移动边界 + Kirchhoff 积分均值面扩散 + 自适应 BDF \\
+Problem IV/export\_result4.py & 问题四结果导出：中截面口径生成 result4.xlsx \\
+Problem IV/第四问\_解题思路与结果.md & 问题四解题思路、表6 与数值验证说明 \\
+result1.xlsx & 问题一结果表（$0\sim1800\ \mathrm{s}$，每 $1\ \mathrm{s}$、每 $0.1\ \mathrm{cm}$） \\
+result2.xlsx & 问题二结果表（$0\sim3\ \mathrm{h}$，每 $1\ \mathrm{s}$、每 $0.1\ \mathrm{cm}$） \\
+result3.xlsx & 问题三结果表（每 $60\ \mathrm{s}$、每 $0.1\ \mathrm{cm}$） \\
+result4.xlsx & 问题四结果表（中截面口径，每 $60\ \mathrm{s}$、每 $0.1\ \mathrm{cm}$） \\
 \bottomrule
 \end{tabular}
 \caption{支撑材料目录}
 \end{table}
 
-% —— 核心代码（用 verbatim 或 lstlisting 展示，建议放关键的几段即可）——
+% —— 核心代码 ——
 \subsection{核心代码}
-\begin{lstlisting}[language=Python, caption={代码说明（示例）}]
-import numpy as np
 
-def f(x):
-    return np.sum(x ** 2)
+限于篇幅，以下摘录三段核心代码，完整代码见支撑材料。
 
-print(f(np.array([1.0, 2.0, 3.0])))
+\begin{lstlisting}[caption={问题一：一维径向有限体积离散与 Picard 迭代（节选）}]
+# Control-volume geometry (factor pi cancelled out):
+#   V_i = r_{i+1/2}^2 - r_{i-1/2}^2
+#   A_{i+1/2} = 2 r_{i+1/2}
+rp = (np.arange(N + 1) + 0.5) * dr
+rm = (np.arange(N + 1) - 0.5) * dr
+V = np.zeros(N + 1)
+V[0]   = (dr / 2.0) ** 2
+V[1:N] = rp[1:N] ** 2 - rm[1:N] ** 2
+V[N]   = R ** 2 - rm[N] ** 2
+Ap, Am = 2.0 * rp, 2.0 * rm
+
+def solve_mass(C_old, dt, Cair_new, Cair_old, theta=0.5):
+    """Moisture: Crank-Nicolson (theta=0.5) with
+    Picard iteration for nonlinear D(C)."""
+    def build(C):
+        # face diffusivity from cell averages
+        Dp = D_coeff(0.5 * (C[:-1] + C[1:]))
+        Dm = np.zeros(N + 1); Dm[1:] = Dp
+        a, b, c = (np.zeros(N + 1), np.zeros(N + 1),
+                   np.zeros(N + 1))
+        a[1:N] =  Dm[1:N] * Am[1:N] / dr
+        c[1:N] =  Dp[1:N] * Ap[1:N] / dr
+        b[1:N] = -(Dp[1:N] * Ap[1:N]
+                   + Dm[1:N] * Am[1:N]) / dr
+        c[0] =  Dp[0] * Ap[0] / dr
+        b[0] = -Dp[0] * Ap[0] / dr       # symmetry at r = 0
+        a[N] =  Dm[N] * Am[N] / dr
+        b[N] = -Dm[N] * Am[N] / dr \
+               - 2.0 * R * hm            # Robin at r = R
+        return a, b, c
+    a0, b0, c0 = build(C_old)
+    LCold = apply(a0, b0, c0, C_old)   # explicit part, frozen
+    mdt = V / dt
+    C_new = C_old.copy()
+    for _ in range(3):                 # Picard iterations
+        a, b, c = build(C_new)
+        rhs = (mdt * C_old + (1.0 - theta) * LCold
+               + theta * S_next + (1.0 - theta) * S_old)
+        C_new = self._thomas(mdt - theta * b,
+                             -theta * a, -theta * c, rhs)
+    return C_new
+\end{lstlisting}
+
+\begin{lstlisting}[caption={问题二：三维控制体导率组装与隐式求解（节选）}]
+def matrix(self, coefficient, h):
+    # Interior faces: harmonic mean reflects
+    # the series conduction resistance
+    g = (self.g * 2 * coefficient[self.i]
+         * coefficient[self.j]
+         / (coefficient[self.i] + coefficient[self.j]))
+    # Boundary faces: half-cell internal resistance
+    # in series with the external film
+    b = self.boundary_area / (
+        self.boundary_distance / coefficient[self.boundary_ids]
+        + 1 / h)
+    diagonal  = np.bincount(self.i, g, minlength=len(coefficient))
+    diagonal += np.bincount(self.j, g, minlength=len(coefficient))
+    diagonal += np.bincount(self.boundary_ids, b,
+                            minlength=len(coefficient))
+    K = coo_matrix((-np.r_[g, g],
+                    (np.r_[self.i, self.j],
+                     np.r_[self.j, self.i])),
+                   shape=(len(coefficient), len(coefficient))).tocsr()
+    return K + diags(diagonal), np.bincount(
+        self.boundary_ids, b, minlength=len(coefficient))
+
+def implicit_step(self, old, guess, storage,
+                  coefficient, h, ambient, dt):
+    K, b = self.matrix(coefficient, h)
+    m = storage * self.volume / dt
+    A = K + diags(m)                   # backward Euler system
+    inv = 1 / A.diagonal()
+    # Jacobi preconditioner
+    M = LinearOperator(A.shape, matvec=lambda x: inv * x)
+    value, info = cg(A, m * old + b * ambient,
+                     x0=guess, M=M,
+                     rtol=1e-9, atol=1e-12, maxiter=900)
+    if info != 0:
+        raise RuntimeError(
+            "linear iteration did not converge (info=%d)" % info)
+    return value
+\end{lstlisting}
+
+\begin{lstlisting}[caption={问题二：阶段分界时刻 $t_c$ 的稳健统计判定}]
+def detect_critical_time(air, tail_start=10800,
+                         window=1200, persistence=1800):
+    """Plateau from the median, noise scale from the MAD,
+    then require the 20-min mean and the least-squares
+    slope to stay inside the band for 30 min."""
+    t, temperature = air[:, 0], air[:, 1]
+    sample_dt = float(np.median(np.diff(t)))
+    tail    = temperature[t >= tail_start]
+    plateau = float(np.median(tail))
+    # robust standard deviation
+    sigma   = float(1.4826 * np.median(np.abs(tail - plateau)))
+    n_win  = int(round(window / sample_dt)) + 1
+    n_keep = int(round(persistence / sample_dt)) + 1
+    mean  = np.full(len(t), np.nan)
+    slope = np.full(len(t), np.nan)
+    for j in range(n_win - 1, len(t)):
+        sl = slice(j - n_win + 1, j + 1)
+        minutes = (t[sl] - t[sl][0]) / 60
+        mean[j]  = temperature[sl].mean()
+        slope[j] = np.polyfit(minutes, temperature[sl], 1)[0]
+    band        = 2 * sigma
+    slope_limit = 3 * sigma / (window / 60)
+    stable = ((np.abs(mean - plateau) <= band)
+              & (np.abs(slope) <= slope_limit))
+    for j in range(n_win - 1, len(t) - n_keep + 1):
+        if np.all(stable[j:j + n_keep]):   # persistence check
+            return float(t[j]), {"plateau": plateau,
+                                 "sigma": sigma, "band": band,
+                                 "slope_limit": slope_limit}
+    raise RuntimeError("no steady stage found in Attachment 1")
 \end{lstlisting}
 
 \end{document}
