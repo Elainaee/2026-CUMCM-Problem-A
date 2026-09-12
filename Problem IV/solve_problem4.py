@@ -1,9 +1,5 @@
 """问题四：二维轴对称半长度收缩模型（数值规范共用 drying_common.py）。
 
-python solve_problem4.py --project "E:/Working Space/CUMCM" --nr 320 --nz 40
-依赖 numpy scipy openpyxl。本脚本是问题四的唯一入口：求解 → 只写交付件 result4.xlsx
-（以附件3模板为底、四位小数、冻结首行首列）；不写 JSON、CSV、summary、诊断等任何其他文件。
-
 敏感性/对照/网格检查跑法只算校验量、不落盘（validate_models.py 用 --validation_only 取内存结果）：
     python solve_problem4.py --no-shrink                  # 不收缩对照
     python solve_problem4.py --material-mode specified    # 全程附录4对照
@@ -44,8 +40,7 @@ class DryingModel:
     def __init__(self, project, nr=320, nz=40, shrink=True, preheat=False, smooth=True, material_mode=MATERIAL_MODE):
         self.air = read_attachment(project / '附件/附件1.xlsx')
         if smooth:
-            # 环境边界条件先做 Savitzky-Golay 保形滤波（窗宽31点即31 min、三阶多项式），
-            # 与问题一、二同一套处理；平滑后的序列才用于插值，平台统计也取自平滑序列。
+            # 环境边界条件先做 Savitzky-Golay 保形滤波（窗宽31点即31 min、三阶多项式）
             self.air[:, 1] = savgol_filter(self.air[:, 1], SMOOTH_WIN, SMOOTH_ORDER)
             self.air[:, 2] = savgol_filter(self.air[:, 2], SMOOTH_WIN, SMOOTH_ORDER)
         self.radius_data = read_attachment(project / '附件/附件2.xlsx')
@@ -170,7 +165,7 @@ class DryingModel:
 
 def run(args):
     started = time.perf_counter()
-    target = xlsx_target(args)      # 交付件只写 result4.xlsx，占用时在长算前报错
+    target = xlsx_target(args) 
     if target is not None:
         ensure_deliverable_writable(target)
     m = DryingModel(args.project, args.nr, args.nz, not args.no_shrink, args.preheat, not args.no_smooth, args.material_mode)
@@ -271,7 +266,7 @@ def run(args):
 
 
 def xlsx_target(args):
-    """交付件 result4.xlsx 的写出路径；敏感性/对照跑法返回 None（不写任何文件）。"""
+    """交付件 result4.xlsx 的写出路径；敏感性/对照跑法返回 None。"""
     variants = []
     if args.no_shrink:
         variants.append('no_shrink')
@@ -281,7 +276,7 @@ def xlsx_target(args):
         variants.append(args.material_mode)
     if args.no_smooth:
         variants.append('no_smooth')
-    if variants:      # 对照/敏感性跑法只算校验量，绝不覆盖或另存结果
+    if variants:      # 对照/敏感性跑法只算校验量
         return None
     return args.project/'result4.xlsx'
 

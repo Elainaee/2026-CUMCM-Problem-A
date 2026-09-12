@@ -5,25 +5,8 @@
 物性默认由 drying_common.MATERIAL_MODE 选择；staged 为6780s附录2切换附录3，
 specified 为题面指定的全程附录3。坐标 z 从中截面0到端面0.125m。
 
-用法（在 Problem III/ 目录下执行）：
-
-    python solve_problem3.py                     # 求解并写出 ../result3.xlsx（默认自适应 BDF）
-    python solve_problem3.py --solver rk4        # 可选：固定步长二阶段隐式 RK4（同样只写 result3.xlsx）
-    python solve_problem3.py --mode compare      # BDF 与 RK4 求解器对比
-    python solve_problem3.py --mode grid         # 网格收敛性检验
-    python solve_problem3.py --mode temporal     # 时间积分精度检验（生产BDF）
-    python solve_problem3.py --mode conservation # 全局水分守恒检验
-    python solve_problem3.py --mode steady       # 均匀稳态检验
-    python solve_problem3.py --mode rebound      # 表面含水率回升检验
-    python solve_problem3.py --mode all          # 求解 + 全部六项检验
-
-产出：
-
-    ../result3.xlsx                     唯一的文件产出：每 60 s 的中截面径向水分浓度（四位小数）
-
 求解与六项检验的关键数值（烘干时间、最终最大含水率、每 6 h 中截面含水率表、网格与时间
-收敛阶、水分守恒误差、均匀稳态漂移、表面回升量、RK4 与 BDF 对照）一律打印到终端，
-不写 npz、报告 md 或检验表格。
+收敛阶、水分守恒误差、均匀稳态漂移、表面回升量、RK4 与 BDF 对照）一律打印到终端
 
 时间推进：BDF（容差见 drying_common.py，与问题四同一套）为生产解；RK4 为可复选路径。两条路径
 终端输出会打印实际步数与右端求值次数；两种求解器的一致性由 compare 检验。
@@ -48,11 +31,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from drying_common import (face_mean, component_atol, mass_balance, RTOL,
     ATOL_T, ATOL_C, NONLINEAR_RTOL, NONLINEAR_MAXITER, MATERIAL_MODE,
     ENV_FINE_INTERVAL_S, ENV_FINE_UNTIL_S, ensure_deliverable_writable, save_deliverable)
-
-
-# ============================================================================
-# 物理库（原 q2_2d_model.py 前 430 行）
-# ============================================================================
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -185,7 +163,7 @@ def detect_critical_time() -> float:
     raise RuntimeError("Could not determine the phase-switch time")
 
 
-CRITICAL_TIME = 6780.0  # 与第二问统一：此前附录2，此时起附录3。
+CRITICAL_TIME = 6780.0 
 
 
 def build_phase_weight() -> np.ndarray:
@@ -405,7 +383,6 @@ def conservative_operator(
     result = space["result"] if out is None else out
     result.fill(0.0)
 
-    # 所有传输系数均沿节点状态做积分平均，由调用方提供。
     if faces is None:
         raise ValueError("必须显式提供积分平均面系数")
     flux_r = radial_face_area * faces[0] * np.diff(values, axis=0) / dr
@@ -507,10 +484,6 @@ def interpolate_to_output_radii(
 ) -> np.ndarray:
     return np.interp(OUTPUT_RADII, radii, profile)
 
-
-# ============================================================================
-# 二维长时模型与时间推进（原 q3_2d_model.py）
-# ============================================================================
 
 PHASE_TRANSITION_START = CRITICAL_TIME - PHASE_TRANSITION_DURATION
 
@@ -1024,7 +997,7 @@ def run_solve(
     xlsx_path: "Path | None" = None,
 ) -> None:
     target = PROJECT / "result3.xlsx" if xlsx_path is None else Path(xlsx_path)
-    if write_xlsx:      # 交付件只写 result3.xlsx，占用时在长算前报错
+    if write_xlsx:
         ensure_deliverable_writable(target)
     result = solve(solver)
     if result.get("conservation") is not None:
@@ -1081,12 +1054,6 @@ def run_solve(
     print(f"result workbook: {output_path}")
 
 
-# ============================================================================
-# 检验辅助
-# ============================================================================
-
-# ============================================================ 检验辅助：临时全局替换
-
 @contextmanager
 def _overrides(**values):
     """临时替换模块级全局（均匀稳态检验用），退出时逐字还原。
@@ -1107,12 +1074,8 @@ def _overrides(**values):
                 globals()[name] = original
 
 
-# ============================================================================
-# 六项检验（原 6 个 q3_*.py）
-# ============================================================================
-
 def check_compare() -> None:
-    """RK4 与 BDF 求解器对比（结果打印到终端）。"""
+    """RK4 与 BDF 求解器对比。"""
     def main() -> None:
         started = time.perf_counter()
 
@@ -1169,8 +1132,6 @@ def check_grid() -> None:
     def main() -> None:
         records = []
 
-        # 直接按参数调用生产求解器，不再改写模块全局常量（原先的 try/finally 全局
-        # 改写既不可并行、也容易漏还原）。
         for name, n_radial, n_axial in GRID_LEVELS:
             start_time = time.perf_counter()
             result = solve(solver="bdf", n_radial=n_radial, n_axial=n_axial)
@@ -1310,7 +1271,7 @@ def check_steady() -> None:
 
 
 def check_rebound() -> None:
-    """表面含水率回升检验（结果打印到终端）。"""
+    """表面含水率回升检验"""
     TEST_DURATION = 2 * 3600
 
 
@@ -1365,12 +1326,6 @@ def check_rebound() -> None:
 
     main()
 
-
-# ============================================================================
-# 命令行入口（原 solve_result3.py）
-# ============================================================================
-
-# ============================================================ 命令行入口
 
 MODES = {
     "compare": ("RK4 与 BDF 求解器对比", check_compare),

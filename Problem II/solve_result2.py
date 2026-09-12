@@ -116,7 +116,7 @@ def solve(nr=320, nphi=None, nz=40, dt=300., end=10800, export=True, rtol=RTOL,
     if end<=0 or end!=int(end):
         raise ValueError("输出时长必须为正整数秒")
     started=time.time()
-    if export:      # 交付件只写 result2.xlsx，占用时在长算前报错
+    if export: 
         ensure_deliverable_writable(PROJECT / "result2.xlsx" if xlsx_path is None else Path(xlsx_path))
     core=model_core()
     with core._overrides(MATERIAL_MODE=material_mode or core.MATERIAL_MODE):
@@ -135,11 +135,6 @@ def solve(nr=320, nphi=None, nz=40, dt=300., end=10800, export=True, rtol=RTOL,
 
 
 def write_result(seconds, temperature, moisture, output_path=None):
-    """保持附件3的两张结果表结构，原子写到 CUMCM 根目录的 result2.xlsx。
-
-    先写同目录临时文件再替换目标；目标被 Excel 等程序占用时删除临时文件并报错，
-    不生成带 _pending 的替代结果：交付件始终只有 result2.xlsx。
-    """
     target = PROJECT / "result2.xlsx" if output_path is None else Path(output_path)
     wb = openpyxl.load_workbook(ATTACHMENTS / "附件3" / "result2.xlsx")
     for name, values in (("温度", temperature), ("水分浓度", moisture)):
